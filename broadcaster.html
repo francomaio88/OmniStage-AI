@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>OmniStage AI · Emisor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --bg-card: #171c24;
+      --ink: #f4efe4;
+      --muted: #9a9284;
+      --gold: #e8b86d;
+      --gold-dim: #8a6a38;
+      --line: #2a3140;
+      --live: #3dcea8;
+      --danger: #e06b6b;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #2a2214 0%, transparent 50%),
+        var(--bg);
+      color: var(--ink);
+    }
+    .wrap {
+      width: min(760px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 2.2rem 0 3rem;
+    }
+    header { margin-bottom: 1.8rem; }
+    .kicker {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .72rem;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin: 0 0 .35rem;
+    }
+    h1 { font-size: 1.8rem; font-weight: 600; margin: 0 0 .4rem; }
+    .lede { color: var(--muted); margin: 0; line-height: 1.5; }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1.25rem 1.3rem 1.35rem;
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: .78rem;
+      color: var(--muted);
+      margin-bottom: .4rem;
+    }
+    input[type="text"] {
+      width: 100%;
+      background: #10141b;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      border-radius: 10px;
+      padding: .7rem .85rem;
+      font: 500 1rem "IBM Plex Mono", monospace;
+    }
+    input[type="text"]:focus {
+      outline: 2px solid var(--gold);
+      outline-offset: 1px;
+    }
+    .row {
+      display: flex;
+      gap: .75rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .row .grow { flex: 1 1 220px; }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: .75rem 1.25rem;
+      font: 600 .95rem "IBM Plex Sans", sans-serif;
+      cursor: pointer;
+    }
+    #toggle {
+      background: var(--gold);
+      color: #14110c;
+      min-width: 168px;
+    }
+    #toggle[data-live="1"] {
+      background: var(--danger);
+      color: #fff;
+    }
+    #toggle:disabled { opacity: .5; cursor: not-allowed; }
+    .status {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .78rem;
+      color: var(--muted);
+    }
+    .dot {
+      width: .55rem; height: .55rem; border-radius: 50%;
+      display: inline-block; background: #555; margin-right: .4rem;
+    }
+    .dot.on { background: var(--live); box-shadow: 0 0 8px var(--live); }
+    .dot.warn { background: var(--gold); }
+    .meter {
+      height: 8px;
+      background: #10141b;
+      border-radius: 99px;
+      overflow: hidden;
+      margin: .85rem 0 .35rem;
+    }
+    .meter > span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+      transition: width 80ms linear;
+    }
+    .meter.hot > span { background: linear-gradient(90deg, #8a3a2a, var(--danger)); }
+    .hint { font-size: .78rem; color: var(--muted); margin: 0; }
+    .log {
+      max-height: 320px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: .7rem;
+    }
+    .line { border-left: 3px solid var(--gold-dim); padding-left: .75rem; }
+    .line .src {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .7rem;
+      color: var(--gold);
+      margin-bottom: .15rem;
+    }
+    .line .orig { margin: 0 0 .2rem; }
+    .line .tr { margin: 0; color: var(--muted); }
+    footer {
+      margin-top: 1.4rem;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+    footer a { color: var(--gold); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="kicker">OmniStage AI · Nerdearla</p>
+      <h1>Emisor del escenario</h1>
+      <p class="lede">Captura el micrófono, recorta el silencio en el edge y publica la transcripción a quien esté mirando este <em>stage</em>.</p>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <div class="grow">
+          <label for="stage">Identificador del escenario</label>
+          <input id="stage" type="text" value="nerdearla-main" autocomplete="off" spellcheck="false"/>
+        </div>
+        <button id="toggle" type="button">Iniciar micrófono</button>
+      </div>
+      <div class="meter" id="meter"><span></span></div>
+      <div class="status">
+        <span><i class="dot" id="wsdot"></i><span id="wsstate">WebSocket inactivo</span></span>
+        <span id="chunkinfo">chunks: 0</span>
+      </div>
+      <p class="hint" id="hint">MediaRecorder envía un fragmento cada 1,5 s. El servidor aplica un noise gate RMS antes de Whisper.</p>
+    </section>
+
+    <section class="card">
+      <label>Últimas líneas (eco del servidor)</label>
+      <div class="log" id="log"></div>
+    </section>
+
+    <footer>
+      Vista de audiencia: <a href="/audience">/audience</a>
+      · Salud del nodo: <a href="/health">/health</a>
+    </footer>
+  </div>
+
+  <script>
+    const CHUNK_MS = 1500;
+    const TARGET_RATE = 16000;
+    const PCM_MAGIC = [0x4f, 0x4d, 0x4e, 0x49, 0x50, 0x43, 0x4d, 0x31]; // OMNIPCM1
+
+    const $ = (id) => document.getElementById(id);
+    const toggle = $("toggle");
+    const stageInput = $("stage");
+    const logBox = $("log");
+    const meterBar = $("meter").firstElementChild;
+    const meterEl = $("meter");
+
+    let mediaStream = null;
+    let recorder = null;
+    let audioCtx = null;
+    let processor = null;
+    let sourceNode = null;
+    let analyser = null;
+    let meterRaf = 0;
+    let pcmTimer = 0;
+    let ws = null;
+    let initSegment = null;
+    let chunksSent = 0;
+    let pcmChunks = [];
+    let live = false;
+    let usePcmFallback = false;
+
+    function wsUrl(path) {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      return `${proto}://${location.host}${path}`;
+    }
+
+    function setWsState(text, mode) {
+      $("wsstate").textContent = text;
+      const dot = $("wsdot");
+      dot.classList.remove("on", "warn");
+      if (mode === "on") dot.classList.add("on");
+      if (mode === "warn") dot.classList.add("warn");
+    }
+
+    function pickMime() {
+      const candidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+      ];
+      return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+    }
+
+    function encodePcmFrame(float32, sampleRate) {
+      const pcm = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      const header = new ArrayBuffer(12);
+      const view = new DataView(header);
+      PCM_MAGIC.forEach((b, i) => view.setUint8(i, b));
+      view.setUint32(8, sampleRate, true);
+      const out = new Uint8Array(12 + pcm.byteLength);
+      out.set(new Uint8Array(header), 0);
+      out.set(new Uint8Array(pcm.buffer), 12);
+      return out.buffer;
+    }
+
+    function downsample(buffer, fromRate, toRate) {
+      if (fromRate === toRate) return buffer;
+      const ratio = fromRate / toRate;
+      const length = Math.max(1, Math.round(buffer.length / ratio));
+      const result = new Float32Array(length);
+      for (let i = 0; i < length; i++) {
+        result[i] = buffer[Math.min(buffer.length - 1, Math.round(i * ratio))];
+      }
+      return result;
+    }
+
+    function updateMeter(samples) {
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+      const rms = Math.sqrt(sum / Math.max(1, samples.length));
+      const pct = Math.min(100, rms * 280);
+      meterBar.style.width = pct + "%";
+      meterEl.classList.toggle("hot", rms > 0.25);
+    }
+
+    function appendLine(msg) {
+      if (!msg.original) return;
+      const el = document.createElement("article");
+      el.className = "line";
+      el.innerHTML = `
+        <div class="src">${msg.source_lang || "?"} → ${msg.target_lang || "?"}</div>
+        <p class="orig">${escapeHtml(msg.original)}</p>
+        <p class="tr">${escapeHtml(msg.translated || "")}</p>
+      `;
+      logBox.prepend(el);
+      while (logBox.children.length > 40) logBox.lastElementChild.remove();
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function connectWs(stageId) {
+      return new Promise((resolve, reject) => {
+        ws = new WebSocket(wsUrl(`/ws/broadcaster/${encodeURIComponent(stageId)}`));
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => {
+          setWsState("conectado · emitiendo", "on");
+          resolve(ws);
+        };
+        ws.onerror = () => reject(new Error("No se pudo abrir el WebSocket"));
+        ws.onclose = () => {
+          setWsState("WebSocket cerrado", live ? "warn" : "");
+          if (live) {
+            setTimeout(() => {
+              if (live) connectWs(stageInput.value.trim() || "default").catch(() => {});
+            }, 1200);
+          }
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.original) appendLine(data);
+          } catch (_) { /* ignore */ }
+        };
+      });
+    }
+
+    async function sendBlob(blob) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !blob.size) return;
+      const buf = await blob.arrayBuffer();
+      if (!initSegment) {
+        initSegment = buf;
+        ws.send(buf);
+      } else {
+        const merged = new Blob([initSegment, buf]);
+        ws.send(await merged.arrayBuffer());
+      }
+      chunksSent += 1;
+      $("chunkinfo").textContent = `chunks: ${chunksSent}`;
+    }
+
+    function flushPcm() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !pcmChunks.length) {
+        pcmChunks = [];
+        return;
+      }
+      const total = pcmChunks.reduce((n, a) => n + a.length, 0);
+      const merged = new Float32Array(total);
+      let offset = 0;
+      for (const part of pcmChunks) {
+        merged.set(part, offset);
+        offset += part.length;
+      }
+      pcmChunks = [];
+      ws.send(encodePcmFrame(merged, TARGET_RATE));
+      chunksSent += 1;
+      $("chunkinfo").textContent = `chunks: ${chunksSent}`;
+    }
+
+    async function start() {
+      const stageId = stageInput.value.trim() || "default";
+      stageInput.value = stageId;
+      toggle.disabled = true;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+          video: false,
+        });
+        await connectWs(stageId);
+
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        sourceNode.connect(analyser);
+        const timeData = new Float32Array(analyser.fftSize);
+        const tickMeter = () => {
+          if (!live) return;
+          if (analyser.getFloatTimeDomainData) {
+            analyser.getFloatTimeDomainData(timeData);
+            updateMeter(timeData);
+          }
+          meterRaf = requestAnimationFrame(tickMeter);
+        };
+
+        const mime = pickMime();
+        if (mime && typeof MediaRecorder !== "undefined") {
+          usePcmFallback = false;
+          recorder = new MediaRecorder(mediaStream, { mimeType: mime, audioBitsPerSecond: 64000 });
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size) sendBlob(e.data);
+          };
+          recorder.start(CHUNK_MS);
+          $("hint").textContent = `MediaRecorder (${mime}) cada ${CHUNK_MS / 1000}s. Noise gate RMS en el servidor.`;
+        } else {
+          usePcmFallback = true;
+          processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          const mute = audioCtx.createGain();
+          mute.gain.value = 0;
+          processor.onaudioprocess = (ev) => {
+            const input = ev.inputBuffer.getChannelData(0);
+            pcmChunks.push(downsample(input, audioCtx.sampleRate, TARGET_RATE));
+          };
+          sourceNode.connect(processor);
+          processor.connect(mute);
+          mute.connect(audioCtx.destination);
+          pcmTimer = window.setInterval(flushPcm, CHUNK_MS);
+          $("hint").textContent = "Este navegador no soporta MediaRecorder de audio. Enviando PCM 16 kHz como respaldo.";
+        }
+        live = true;
+        meterRaf = requestAnimationFrame(tickMeter);
+
+        stageInput.disabled = true;
+        toggle.dataset.live = "1";
+        toggle.textContent = "Detener emisión";
+      } catch (err) {
+        setWsState(err.message || "error", "warn");
+        await stop();
+      } finally {
+        toggle.disabled = false;
+      }
+    }
+
+    async function stop() {
+      live = false;
+      toggle.dataset.live = "0";
+      toggle.textContent = "Iniciar micrófono";
+      stageInput.disabled = false;
+      initSegment = null;
+      pcmChunks = [];
+      if (meterRaf) cancelAnimationFrame(meterRaf);
+      meterRaf = 0;
+      if (pcmTimer) window.clearInterval(pcmTimer);
+      pcmTimer = 0;
+      if (recorder && recorder.state !== "inactive") {
+        try { recorder.stop(); } catch (_) { /* ignore */ }
+      }
+      recorder = null;
+      if (processor) {
+        processor.disconnect();
+        processor.onaudioprocess = null;
+      }
+      if (sourceNode) sourceNode.disconnect();
+      if (audioCtx) {
+        try { await audioCtx.close(); } catch (_) { /* ignore */ }
+      }
+      processor = null;
+      sourceNode = null;
+      audioCtx = null;
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+      ws = null;
+      meterBar.style.width = "0%";
+      setWsState("WebSocket inactivo", "");
+    }
+
+    toggle.addEventListener("click", () => {
+      if (live) stop();
+      else start();
+    });
+  </script>
+</body>
+</html>

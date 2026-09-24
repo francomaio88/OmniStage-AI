@@ -1,0 +1,8 @@
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.32.0
+websockets>=13.1
+faster-whisper>=1.1.0
+argostranslate>=1.9.6
+numpy>=1.26.4
+python-multipart>=0.0.12
+aiofiles>=24.1.0
