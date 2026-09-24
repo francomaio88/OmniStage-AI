@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import struct
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -26,6 +27,9 @@ import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # ---------------------------------------------------------------------------
 # Configuración (todas las constantes son ajustables por variables de entorno)
