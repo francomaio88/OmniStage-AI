@@ -5,7 +5,7 @@ Arquitectura multitenant por stage_id:
   - /ws/broadcaster/{stage_id}  recibe chunks de audio (WebM/Opus o PCM s16le)
   - /ws/audience/{stage_id}     emite JSON {original, translated, ...}
 
-El audio nunca viaja a una API comercial: Whisper y Argos Translate corren en el edge.
+El audio nunca viaja a una API comercial: Whisper y Helsinki-NLP (transformers) corren en el edge.
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ import logging
 import os
 import shutil
 import struct
+import subprocess
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -36,11 +38,11 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 
 SAMPLE_RATE = int(os.getenv("OMNI_SAMPLE_RATE", "16000"))
-RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0"))
+RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.05"))
 LOOKBACK_MS = int(os.getenv("OMNI_LOOKBACK_MS", "280"))
 LOOKBACK_SAMPLES = max(1, int(SAMPLE_RATE * LOOKBACK_MS / 1000))
-HANGOVER_CHUNKS = int(os.getenv("OMNI_HANGOVER_CHUNKS", "1"))
-WHISPER_MODEL = os.getenv("OMNI_WHISPER_MODEL", "tiny")
+HANGOVER_CHUNKS = int(os.getenv("OMNI_HANGOVER_CHUNKS", "3"))
+WHISPER_MODEL = os.getenv("OMNI_WHISPER_MODEL", "small")
 WHISPER_DEVICE = os.getenv("OMNI_WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE = os.getenv("OMNI_WHISPER_COMPUTE", "int8")
 QUEUE_MAX = int(os.getenv("OMNI_QUEUE_MAX", "6"))
@@ -59,6 +61,9 @@ WHISPER_HALLUCINATIONS = {
     "you",
     "the",
     "gracias",
+    "obrigado",
+    "obrigada",
+    "inscreva-se",
     "subtitles by",
     "subscribe",
 }
@@ -154,37 +159,43 @@ def resample_linear(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.nda
     return np.interp(dst_x, src_x, samples).astype(np.float32)
 
 
-async def decode_with_ffmpeg(payload: bytes) -> np.ndarray:
+def _ffmpeg_decode_sync(payload: bytes) -> np.ndarray:
+    """Decodifica un chunk con ffmpeg en un hilo (compatible con el event loop de Windows)."""
     if not FFMPEG_BIN or not payload:
         return np.zeros(0, dtype=np.float32)
-    proc = await asyncio.create_subprocess_exec(
-        FFMPEG_BIN,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        "pipe:0",
-        "-f",
-        "s16le",
-        "-acodec",
-        "pcm_s16le",
-        "-ac",
-        "1",
-        "-ar",
-        str(SAMPLE_RATE),
-        "pipe:1",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    proc = subprocess.run(
+        [
+            FFMPEG_BIN,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            "pipe:0",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ac",
+            "1",
+            "-ar",
+            str(SAMPLE_RATE),
+            "pipe:1",
+        ],
+        input=payload,
+        capture_output=True,
+        check=False,
     )
-    stdout, stderr = await proc.communicate(input=payload)
     if proc.returncode != 0:
-        err = (stderr or b"").decode("utf-8", errors="replace").strip()
+        err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
         log.debug("ffmpeg rechazó un chunk: %s", err)
         return np.zeros(0, dtype=np.float32)
-    if not stdout:
+    if not proc.stdout:
         return np.zeros(0, dtype=np.float32)
-    return np.frombuffer(stdout, dtype="<i2").astype(np.float32) / 32768.0
+    return np.frombuffer(proc.stdout, dtype="<i2").astype(np.float32) / 32768.0
+
+
+async def decode_with_ffmpeg(payload: bytes) -> np.ndarray:
+    return await asyncio.to_thread(_ffmpeg_decode_sync, payload)
 
 
 async def decode_audio_chunk(payload: bytes) -> np.ndarray:
@@ -194,10 +205,14 @@ async def decode_audio_chunk(payload: bytes) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Whisper + Argos (se inicializan una sola vez al arrancar)
+# Whisper + Helsinki-NLP (se inicializan una sola vez al arrancar)
 # ---------------------------------------------------------------------------
 
 whisper_model = None
+translator_pipelines: dict[tuple[str, str], dict] = {}
+_translator_lock = threading.Lock()
+# MODIFICADO: Eliminados los pares de portugués para el MVP
+TRANSLATION_PAIRS = (("es", "en"), ("en", "es"))
 
 
 def load_whisper():
@@ -216,64 +231,97 @@ def load_whisper():
     )
 
 
-def install_argos_pairs() -> None:
-    import argostranslate.package
+def load_translators() -> dict[tuple[str, str], dict]:
+    """Carga una sola vez los MarianMT de Helsinki-NLP y los deja en memoria."""
+    import torch
+    from transformers import MarianMTModel, MarianTokenizer
 
-    log.info("Actualizando índice de paquetes Argos Translate…")
-    argostranslate.package.update_package_index()
-    available = argostranslate.package.get_available_packages()
-    installed = argostranslate.package.get_installed_packages()
-    installed_pairs = {(p.from_code, p.to_code) for p in installed}
-
-    for src, dst in (("es", "en"), ("en", "es")):
-        if (src, dst) in installed_pairs:
-            log.info("Argos %s→%s ya instalado", src, dst)
-            continue
-        pkg = next((p for p in available if p.from_code == src and p.to_code == dst), None)
-        if pkg is None:
-            log.warning("No se encontró el paquete Argos %s→%s", src, dst)
-            continue
-        log.info("Descargando e instalando Argos %s→%s…", src, dst)
-        path = pkg.download()
-        argostranslate.package.install_from_path(path)
-        log.info("Argos %s→%s listo", src, dst)
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and WHISPER_DEVICE == "cuda" else "cpu"
+    )
+    cache: dict[tuple[str, str], dict] = {}
+    for src, tgt in TRANSLATION_PAIRS:
+        model_id = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
+        log.info("Cargando traductor local %s (device=%s)", model_id, device)
+        tokenizer = MarianTokenizer.from_pretrained(model_id)
+        model = MarianMTModel.from_pretrained(model_id).to(device)
+        model.eval()
+        cache[(src, tgt)] = {"tokenizer": tokenizer, "model": model}
+        log.info("Traductor %s listo", model_id)
+    return cache
 
 
 def translate_text(text: str, source: str, target: str) -> str:
-    import argostranslate.translate
+    import torch
 
+    text = text.strip()
     if not text or source == target:
         return text
+    translator = translator_pipelines.get((source, target))
+    if translator is None:
+        log.warning("No hay modelo Helsinki-NLP para %s→%s", source, target)
+        return text
+    tokenizer = translator["tokenizer"]
+    model = translator["model"]
     try:
-        return argostranslate.translate.translate(text, source, target)
+        device = next(model.parameters()).device
+        with _translator_lock:
+            with torch.no_grad():
+                inputs = tokenizer(text, return_tensors="pt", padding=True).to(device)
+                translated_tokens = model.generate(**inputs)
+                texto_traducido = tokenizer.decode(
+                    translated_tokens[0], skip_special_tokens=True
+                )
+        return (texto_traducido or "").strip() or text
     except Exception as exc:
         log.warning("Fallo de traducción %s→%s: %s", source, target, exc)
         return text
 
 
-def transcribe_sync(audio: np.ndarray) -> tuple[str, str]:
+# MODIFICADO: Solo permitimos es y en
+ALLOWED_SPEAKER_LANGS = {"es", "en"}
+
+
+def normalize_speaker_lang(value: Optional[str]) -> str:
+    code = (value or "es").strip().lower().replace("_", "-")
+    aliases = {
+        "spanish": "es",
+        "español": "es",
+        "espanol": "es",
+        "english": "en",
+    }
+    code = aliases.get(code, code.split("-", 1)[0])
+    if code not in ALLOWED_SPEAKER_LANGS:
+        return "es"
+    return code
+
+
+def transcribe_sync(audio: np.ndarray, language: str) -> tuple[str, str]:
     """Bloqueante: debe ejecutarse en un thread pool."""
     if whisper_model is None or audio.size < int(0.15 * SAMPLE_RATE):
-        return "", ""
+        return "", language
     segments, info = whisper_model.transcribe(
         audio,
-        language=None,
+        language=language,
         beam_size=1,
-        vad_filter=False,
+        vad_filter=True,
         without_timestamps=True,
         condition_on_previous_text=False,
+        no_speech_threshold=0.65,
+        initial_prompt="A continuación se muestra una transcripción precisa del audio:"
     )
     text = " ".join(seg.text.strip() for seg in segments).strip()
-    lang = (info.language or "").lower()
+    lang = language or (info.language or "").lower()
     return text, lang
 
 
 def pair_for_lang(detected: str) -> tuple[str, str]:
+    # MODIFICADO: Eliminada la lógica de portugués
     if detected.startswith("es"):
         return "es", "en"
     if detected.startswith("en"):
         return "en", "es"
-    return "en", "es"
+    return "es", "en"
 
 
 def is_hallucination(text: str) -> bool:
@@ -294,6 +342,7 @@ class Stage:
     lookback: CircularLookback = field(default_factory=lambda: CircularLookback(LOOKBACK_SAMPLES))
     hangover: int = 0
     speaking: bool = False
+    speaker_lang: str = "es"
     last_activity: float = field(default_factory=time.time)
 
     def touch(self) -> None:
@@ -400,27 +449,52 @@ def apply_noise_gate(stage: Stage, audio: np.ndarray) -> Optional[np.ndarray]:
 async def stage_worker(stage: Stage) -> None:
     loop = asyncio.get_running_loop()
     log.info("Worker de transcripción activo: %s", stage.stage_id)
+    
+    # AQUÍ ESTÁ LA MAGIA: Un buffer para guardar el audio mientras hablas
+    audio_buffer = [] 
+    
     try:
         while True:
             audio = await stage.queue.get()
             gated = apply_noise_gate(stage, audio)
-            if gated is None:
-                continue
-            text, detected = await loop.run_in_executor(None, transcribe_sync, gated)
-            if not text or is_hallucination(text):
-                continue
-            source, target = pair_for_lang(detected or "en")
-            translated = await loop.run_in_executor(None, translate_text, text, source, target)
-            payload = {
-                "stage_id": stage.stage_id,
-                "original": text,
-                "translated": translated,
-                "source_lang": source,
-                "target_lang": target,
-                "ts": time.time(),
-            }
-            log.info("[%s] %s: %s → %s", stage.stage_id, source, text, translated)
-            await broadcast_stage(stage, payload)
+            
+            # Si el Noise Gate dice que estás hablando, guardamos el pedacito de audio
+            if gated is not None:
+                audio_buffer.append(gated)
+                
+            # ¿Cuándo traducimos? (AHORA SÍ ESTÁ DENTRO DEL WHILE)
+            # 1. Si hubo silencio (gated es None) y hay algo grabado.
+            # 2. O si el buffer alcanzó nuestro límite de latencia (3 chunks).
+            if (gated is None and len(audio_buffer) > 0) or len(audio_buffer) >= 3:
+                # Unimos todos los pedacitos en una sola grabación completa
+                full_audio = np.concatenate(audio_buffer)
+                audio_buffer.clear() # Vaciamos el buffer para tu próxima frase
+                
+                speaker_lang = stage.speaker_lang
+                # Mandamos la frase completa a Whisper
+                text, detected = await loop.run_in_executor(
+                    None, transcribe_sync, full_audio, speaker_lang
+                )
+                text = (text or "").strip()
+                if not text or is_hallucination(text):
+                    continue
+                
+                # Mandamos la frase completa a traducir
+                source, target = pair_for_lang(detected or speaker_lang)
+                translated = await loop.run_in_executor(None, translate_text, text, source, target)
+                translated = (translated or "").strip()
+                
+                payload = {
+                    "stage_id": stage.stage_id,
+                    "original": text,
+                    "translated": translated,
+                    "source_lang": source,
+                    "target_lang": target,
+                    "ts": time.time(),
+                }
+                log.info("[%s] %s: %s → %s", stage.stage_id, source, text, translated)
+                await broadcast_stage(stage, payload)
+                
     except asyncio.CancelledError:
         log.info("Worker detenido: %s", stage.stage_id)
         raise
@@ -432,7 +506,7 @@ async def stage_worker(stage: Stage) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global whisper_model
+    global whisper_model, translator_pipelines
     if FFMPEG_BIN:
         log.info("ffmpeg encontrado: %s", FFMPEG_BIN)
     else:
@@ -441,7 +515,7 @@ async def lifespan(_app: FastAPI):
             "instalar ffmpeg habilita la decodificación nativa de WebM/Opus."
         )
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, install_argos_pairs)
+    translator_pipelines = await loop.run_in_executor(None, load_translators)
     whisper_model = await loop.run_in_executor(None, load_whisper)
     log.info(
         "OmniStage listo | modelo=%s | rms_threshold=%.4f | lookback=%dms",
@@ -544,6 +618,7 @@ async def list_stages() -> JSONResponse:
                 "stage_id": sid,
                 "audience": len(stage.audience),
                 "broadcasters": len(stage.broadcasters),
+                "speaker_lang": stage.speaker_lang,
                 "last_activity": stage.last_activity,
             }
         )
@@ -551,19 +626,27 @@ async def list_stages() -> JSONResponse:
 
 
 @app.websocket("/ws/broadcaster/{stage_id}")
-async def ws_broadcaster(websocket: WebSocket, stage_id: str) -> None:
+async def ws_broadcaster(websocket: WebSocket, stage_id: str, lang: str = "es") -> None:
     stage_id = stage_id.strip() or "default"
+    speaker_lang = normalize_speaker_lang(lang or websocket.query_params.get("lang"))
     await websocket.accept()
     stage = await get_or_create_stage(stage_id)
+    stage.speaker_lang = speaker_lang
     stage.broadcasters.add(websocket)
     stage.touch()
-    log.info("Broadcaster conectado a %s (%d emisores)", stage_id, len(stage.broadcasters))
+    log.info(
+        "Broadcaster conectado a %s (lang=%s, %d emisores)",
+        stage_id,
+        speaker_lang,
+        len(stage.broadcasters),
+    )
     await websocket.send_text(
         json.dumps(
             {
                 "type": "hello",
                 "role": "broadcaster",
                 "stage_id": stage_id,
+                "speaker_lang": speaker_lang,
                 "rms_threshold": RMS_THRESHOLD,
                 "sample_rate": SAMPLE_RATE,
             }

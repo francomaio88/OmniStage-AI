@@ -8,153 +8,102 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
   <style>
-    :root {
-      --bg: #0e1116;
-      --bg-card: #171c24;
-      --ink: #f4efe4;
-      --muted: #9a9284;
-      --gold: #e8b86d;
-      --gold-dim: #8a6a38;
-      --line: #2a3140;
-      --live: #3dcea8;
-      --danger: #e06b6b;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; }
-    body {
-      font-family: "IBM Plex Sans", system-ui, sans-serif;
-      background:
-        radial-gradient(1200px 500px at 10% -10%, #2a2214 0%, transparent 50%),
-        var(--bg);
-      color: var(--ink);
-    }
-    .wrap {
-      width: min(760px, calc(100% - 2rem));
-      margin: 0 auto;
-      padding: 2.2rem 0 3rem;
-    }
-    header { margin-bottom: 1.8rem; }
-    .kicker {
-      font-family: "IBM Plex Mono", monospace;
-      font-size: .72rem;
-      letter-spacing: .16em;
-      text-transform: uppercase;
-      color: var(--gold);
-      margin: 0 0 .35rem;
-    }
-    h1 { font-size: 1.8rem; font-weight: 600; margin: 0 0 .4rem; }
-    .lede { color: var(--muted); margin: 0; line-height: 1.5; }
-    .card {
-      background: var(--bg-card);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 1.25rem 1.3rem 1.35rem;
-      margin-bottom: 1rem;
-    }
-    label {
-      display: block;
-      font-size: .78rem;
-      color: var(--muted);
-      margin-bottom: .4rem;
-    }
-    input[type="text"] {
-      width: 100%;
-      background: #10141b;
-      border: 1px solid var(--line);
-      color: var(--ink);
-      border-radius: 10px;
-      padding: .7rem .85rem;
-      font: 500 1rem "IBM Plex Mono", monospace;
-    }
-    input[type="text"]:focus {
-      outline: 2px solid var(--gold);
-      outline-offset: 1px;
-    }
-    .row {
-      display: flex;
-      gap: .75rem;
-      align-items: flex-end;
-      flex-wrap: wrap;
-    }
-    .row .grow { flex: 1 1 220px; }
-    button {
-      border: 0;
-      border-radius: 999px;
-      padding: .75rem 1.25rem;
-      font: 600 .95rem "IBM Plex Sans", sans-serif;
-      cursor: pointer;
-    }
-    #toggle {
-      background: var(--gold);
-      color: #14110c;
-      min-width: 168px;
-    }
-    #toggle[data-live="1"] {
-      background: var(--danger);
-      color: #fff;
-    }
-    #toggle:disabled { opacity: .5; cursor: not-allowed; }
-    .status {
-      display: flex;
-      justify-content: space-between;
-      gap: 1rem;
-      flex-wrap: wrap;
-      font-family: "IBM Plex Mono", monospace;
-      font-size: .78rem;
-      color: var(--muted);
-    }
-    .dot {
-      width: .55rem; height: .55rem; border-radius: 50%;
-      display: inline-block; background: #555; margin-right: .4rem;
-    }
-    .dot.on { background: var(--live); box-shadow: 0 0 8px var(--live); }
-    .dot.warn { background: var(--gold); }
-    .meter {
-      height: 8px;
-      background: #10141b;
-      border-radius: 99px;
-      overflow: hidden;
-      margin: .85rem 0 .35rem;
-    }
-    .meter > span {
-      display: block;
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--gold-dim), var(--gold));
-      transition: width 80ms linear;
-    }
-    .meter.hot > span { background: linear-gradient(90deg, #8a3a2a, var(--danger)); }
-    .hint { font-size: .78rem; color: var(--muted); margin: 0; }
-    .log {
-      max-height: 320px;
-      overflow: auto;
-      display: flex;
-      flex-direction: column;
-      gap: .7rem;
-    }
-    .line { border-left: 3px solid var(--gold-dim); padding-left: .75rem; }
-    .line .src {
-      font-family: "IBM Plex Mono", monospace;
-      font-size: .7rem;
-      color: var(--gold);
-      margin-bottom: .15rem;
-    }
-    .line .orig { margin: 0 0 .2rem; }
-    .line .tr { margin: 0; color: var(--muted); }
-    footer {
-      margin-top: 1.4rem;
-      color: var(--muted);
-      font-size: .78rem;
-    }
-    footer a { color: var(--gold); }
+:root {
+  --bg: #0b0f19;
+  --bg-card: rgba(18, 25, 41, 0.7);
+  --ink: #f8fafc;
+  --muted: #94a3b8;
+  --accent-cyan: #00F2FE;
+  --accent-magenta: #4FACFE;
+  --line: rgba(79, 172, 254, 0.2);
+  --live: #10b981;
+  --danger: #ef4444;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  background: 
+    radial-gradient(circle at 15% 50%, rgba(79, 172, 254, 0.1) 0%, transparent 40%),
+    radial-gradient(circle at 85% 30%, rgba(0, 242, 254, 0.08) 0%, transparent 40%),
+    var(--bg);
+  color: var(--ink);
+}
+.wrap {
+  width: min(760px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2.2rem 0 3rem;
+}
+header { margin-bottom: 2rem; display: flex; align-items: center; gap: 1rem; }
+.logo-container { width: 60px; height: 60px; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0, 242, 254, 0.2); border: 1px solid var(--line); }
+.logo-container img { width: 100%; height: 100%; object-fit: cover; }
+.header-text { flex: 1; }
+.kicker { font-family: "IBM Plex Mono", monospace; font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--accent-cyan); margin: 0 0 .35rem; }
+h1 { font-size: 1.8rem; font-weight: 600; margin: 0 0 .4rem; background: -webkit-linear-gradient(45deg, var(--accent-cyan), var(--accent-magenta)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.lede { color: var(--muted); margin: 0; line-height: 1.5; font-size: 0.95rem; }
+.card {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+label { display: block; font-size: .8rem; color: var(--accent-magenta); margin-bottom: .5rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+input[type="text"], select {
+  width: 100%; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255,255,255,0.1); color: var(--ink); border-radius: 8px; padding: .8rem 1rem; font: 500 1rem "IBM Plex Mono", monospace; transition: all 0.3s ease;
+}
+input[type="text"]:focus, select:focus { outline: none; border-color: var(--accent-cyan); box-shadow: 0 0 12px rgba(0, 242, 254, 0.2); }
+.row { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+.row .grow { flex: 1 1 200px; }
+button {
+  border: none; border-radius: 8px; padding: .85rem 1.5rem; font: 600 1rem "IBM Plex Sans", sans-serif; cursor: pointer; transition: all 0.3s ease;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta)); color: #fff; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
+}
+button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(79, 172, 254, 0.4); }
+#toggle { min-width: 180px; }
+#toggle[data-live="1"] { background: var(--danger); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4); animation: pulse 2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+#toggle:disabled { opacity: .5; cursor: not-allowed; animation: none; transform: none; }
+.status { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-family: "IBM Plex Mono", monospace; font-size: .8rem; color: var(--muted); margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.dot { width: .6rem; height: .6rem; border-radius: 50%; display: inline-block; background: #334155; margin-right: .5rem; }
+.dot.on { background: var(--live); box-shadow: 0 0 10px var(--live); }
+.dot.warn { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; }
+.meter { height: 6px; background: rgba(0,0,0,0.5); border-radius: 99px; overflow: hidden; margin: 1.2rem 0 .5rem; box-shadow: inset 0 1px 3px rgba(0,0,0,0.3); }
+.meter > span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-magenta), var(--accent-cyan)); transition: width 80ms linear; border-radius: 99px; }
+.meter.hot > span { background: linear-gradient(90deg, #f59e0b, var(--danger)); }
+.hint { font-size: .75rem; color: #64748b; margin: 0; font-family: "IBM Plex Mono", monospace; }
+.log { max-height: 350px; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; padding-right: 10px; }
+.log::-webkit-scrollbar { width: 6px; }
+.log::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+.log::-webkit-scrollbar-thumb { background: rgba(79, 172, 254, 0.3); border-radius: 4px; }
+.line { border-left: 2px solid var(--accent-magenta); padding-left: 1rem; background: rgba(0,0,0,0.2); padding: 0.8rem 0.8rem 0.8rem 1rem; border-radius: 0 8px 8px 0; }
+.line .src { font-family: "IBM Plex Mono", monospace; font-size: .7rem; color: var(--accent-cyan); margin-bottom: .4rem; text-transform: uppercase; }
+.line .orig { margin: 0 0 .3rem; font-weight: 500; font-size: 1.05rem; }
+.line .tr { margin: 0; color: var(--muted); font-size: 0.95rem; }
+footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; text-align: center; }
+footer a { color: var(--accent-cyan); text-decoration: none; transition: color 0.2s; }
+footer a:hover { color: var(--accent-magenta); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <p class="kicker">OmniStage AI · Nerdearla</p>
-      <h1>Emisor del escenario</h1>
-      <p class="lede">Captura el micrófono, recorta el silencio en el edge y publica la transcripción a quien esté mirando este <em>stage</em>.</p>
+<div class="logo-container" style="display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; min-width: 150px;">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e8b86d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+    <line x1="12" y1="19" x2="12" y2="22"></line>
+    <line x1="8" y1="22" x2="16" y2="22"></line>
+  </svg>
+  <span style="font-weight: bold; color: #f4efe4; font-size: 1.2rem; white-space: nowrap;">OmniStage</span>
+</div>
+      <div class="header-text">
+        <p class="kicker">OmniStage AI · Nerdearla</p>
+        <h1>Emisor del escenario</h1>
+        <p class="lede">Captura el micrófono, recorta el silencio en el edge y publica la transcripción.</p>
+      </div>
     </header>
 
     <section class="card">
@@ -162,6 +111,13 @@
         <div class="grow">
           <label for="stage">Identificador del escenario</label>
           <input id="stage" type="text" value="nerdearla-main" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="grow">
+          <label for="speakerLang">Idioma del orador</label>
+          <select id="speakerLang">
+            <option value="es" selected>Español</option>
+            <option value="en">Inglés</option>
+          </select>
         </div>
         <button id="toggle" type="button">Iniciar micrófono</button>
       </div>
@@ -185,13 +141,14 @@
   </div>
 
   <script>
-    const CHUNK_MS = 1500;
+    const CHUNK_MS = 1000;
     const TARGET_RATE = 16000;
     const PCM_MAGIC = [0x4f, 0x4d, 0x4e, 0x49, 0x50, 0x43, 0x4d, 0x31]; // OMNIPCM1
 
     const $ = (id) => document.getElementById(id);
     const toggle = $("toggle");
     const stageInput = $("stage");
+    const speakerLang = $("speakerLang");
     const logBox = $("log");
     const meterBar = $("meter").firstElementChild;
     const meterEl = $("meter");
@@ -292,7 +249,10 @@
 
     function connectWs(stageId) {
       return new Promise((resolve, reject) => {
-        ws = new WebSocket(wsUrl(`/ws/broadcaster/${encodeURIComponent(stageId)}`));
+        const lang = speakerLang.value || "es";
+        ws = new WebSocket(
+          wsUrl(`/ws/broadcaster/${encodeURIComponent(stageId)}?lang=${encodeURIComponent(lang)}`)
+        );
         ws.binaryType = "arraybuffer";
         ws.onopen = () => {
           setWsState("conectado · emitiendo", "on");
@@ -402,6 +362,7 @@
         meterRaf = requestAnimationFrame(tickMeter);
 
         stageInput.disabled = true;
+        speakerLang.disabled = true;
         toggle.dataset.live = "1";
         toggle.textContent = "Detener emisión";
       } catch (err) {
@@ -417,6 +378,7 @@
       toggle.dataset.live = "0";
       toggle.textContent = "Iniciar micrófono";
       stageInput.disabled = false;
+      speakerLang.disabled = false;
       initSegment = null;
       pcmChunks = [];
       if (meterRaf) cancelAnimationFrame(meterRaf);
