@@ -45,9 +45,12 @@ RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.005"))
 LOOKBACK_MS = int(os.getenv("OMNI_LOOKBACK_MS", "280"))
 LOOKBACK_SAMPLES = max(1, int(SAMPLE_RATE * LOOKBACK_MS / 1000))
 HANGOVER_CHUNKS = int(os.getenv("OMNI_HANGOVER_CHUNKS", "3"))
-WHISPER_MODEL = os.getenv("OMNI_WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("OMNI_WHISPER_MODEL", "small")
 WHISPER_DEVICE = os.getenv("OMNI_WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE = os.getenv("OMNI_WHISPER_COMPUTE", "int8")
+WHISPER_BEAM_SIZE = int(os.getenv("OMNI_WHISPER_BEAM_SIZE", "1"))
+WHISPER_CPU_THREADS = int(os.getenv("OMNI_CPU_THREADS", "0"))
+TRANSLATE_BEAMS = int(os.getenv("OMNI_TRANSLATE_BEAMS", "1"))
 QUEUE_MAX = int(os.getenv("OMNI_QUEUE_MAX", "6"))
 HOST = os.getenv("OMNI_HOST", "0.0.0.0")
 PORT = int(os.getenv("OMNI_PORT", "8000"))
@@ -243,7 +246,6 @@ whisper_model = None
 gemini_client = None
 translator_pipelines: dict[tuple[str, str], dict] = {}
 _translator_lock = threading.Lock()
-# MODIFICADO: Eliminados los pares de portugués para el MVP
 TRANSLATION_PAIRS = (("es", "en"), ("en", "es"))
 
 
@@ -251,15 +253,18 @@ def load_whisper():
     from faster_whisper import WhisperModel
 
     log.info(
-        "Cargando faster-whisper model=%s device=%s compute=%s",
+        "Cargando faster-whisper model=%s device=%s compute=%s cpu_threads=%d",
         WHISPER_MODEL,
         WHISPER_DEVICE,
         WHISPER_COMPUTE,
+        WHISPER_CPU_THREADS,
     )
     return WhisperModel(
         WHISPER_MODEL,
         device=WHISPER_DEVICE,
         compute_type=WHISPER_COMPUTE,
+        cpu_threads=WHISPER_CPU_THREADS,
+        num_workers=1,
     )
 
 
@@ -271,6 +276,9 @@ def load_translators() -> dict[tuple[str, str], dict]:
     device = torch.device(
         "cuda" if torch.cuda.is_available() and WHISPER_DEVICE == "cuda" else "cpu"
     )
+    if device.type == "cpu":
+        torch.set_num_threads(max(1, min(4, os.cpu_count() or 4)))
+
     cache: dict[tuple[str, str], dict] = {}
     for src, tgt in TRANSLATION_PAIRS:
         model_id = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
@@ -278,6 +286,8 @@ def load_translators() -> dict[tuple[str, str], dict]:
         tokenizer = MarianTokenizer.from_pretrained(model_id)
         model = MarianMTModel.from_pretrained(model_id).to(device)
         model.eval()
+        for p in model.parameters():
+            p.requires_grad = False
         cache[(src, tgt)] = {"tokenizer": tokenizer, "model": model}
         log.info("Traductor %s listo", model_id)
     return cache
@@ -298,9 +308,20 @@ def translate_text(text: str, source: str, target: str) -> str:
     try:
         device = next(model.parameters()).device
         with _translator_lock:
-            with torch.no_grad():
-                inputs = tokenizer(text, return_tensors="pt", padding=True).to(device)
-                translated_tokens = model.generate(**inputs)
+            with torch.inference_mode():
+                inputs = tokenizer(
+                    text,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=256,
+                ).to(device)
+                translated_tokens = model.generate(
+                    **inputs,
+                    num_beams=TRANSLATE_BEAMS,
+                    max_new_tokens=128,
+                    early_stopping=True if TRANSLATE_BEAMS > 1 else False,
+                )
                 texto_traducido = tokenizer.decode(
                     translated_tokens[0], skip_special_tokens=True
                 )
@@ -310,7 +331,6 @@ def translate_text(text: str, source: str, target: str) -> str:
         return text
 
 
-# MODIFICADO: Solo permitimos es y en
 ALLOWED_SPEAKER_LANGS = {"es", "en"}
 
 
@@ -329,8 +349,9 @@ def normalize_speaker_lang(value: Optional[str]) -> str:
 
 
 MIN_INFER_SAMPLES = int(0.4 * SAMPLE_RATE)
-FLUSH_AFTER_CHUNKS = 3
-QUEUE_IDLE_FLUSH_S = 1.8
+MAX_AUDIO_SAMPLES = int(1.8 * SAMPLE_RATE)
+FLUSH_AFTER_CHUNKS = 2
+QUEUE_IDLE_FLUSH_S = 0.35
 
 
 def transcribe_sync(audio: np.ndarray, language: str, initial_prompt: str = "") -> tuple[str, str]:
@@ -338,15 +359,18 @@ def transcribe_sync(audio: np.ndarray, language: str, initial_prompt: str = "") 
     language = language if language in ALLOWED_SPEAKER_LANGS else "es"
     if whisper_model is None or audio.size < MIN_INFER_SAMPLES:
         return "", language
+    audio = np.ascontiguousarray(audio, dtype=np.float32)
     kwargs = {
         "language": language,
-        "beam_size": 5,                 
-        "task": "transcribe",           
+        "beam_size": WHISPER_BEAM_SIZE,
+        "best_of": 1,
+        "task": "transcribe",
         "vad_filter": False,
-        "without_timestamps": True,     
-        "temperature": 0.0,              # <--- AGREGAR ESTO: Evita que invente texto aleatorio
-        "condition_on_previous_text": False, # <--- AGREGAR ESTO: Evita que arrastre bucles anteriores
-        "no_speech_threshold": 0.6,     
+        "without_timestamps": True,
+        "temperature": 0.0,
+        "condition_on_previous_text": False,
+        "no_speech_threshold": 0.6,
+        "compression_ratio_threshold": 2.4,
     }
     prompt = (initial_prompt or "").strip()
     if prompt:
@@ -358,7 +382,6 @@ def transcribe_sync(audio: np.ndarray, language: str, initial_prompt: str = "") 
 
 
 def pair_for_lang(detected: str) -> tuple[str, str]:
-    # MODIFICADO: Eliminada la lógica de portugués
     if detected.startswith("es"):
         return "es", "en"
     if detected.startswith("en"):
@@ -429,15 +452,16 @@ def transcribe_cloud_sync(audio: np.ndarray, speaker_lang: str) -> tuple[str, st
         print("Gemini: skip (RMS de silencio, no se llama a la API)", flush=True)
         return "", "", source, target
     wav = numpy_to_wav_bytes(audio)
+    target_name = "inglés" if target == "en" else "español"
     prompt = (
-        "Transcribí este audio de una conferencia y traducilo. "
-        f"El orador habla principalmente en '{speaker_lang}'. "
+        f"Transcribí con máxima fidelidad este audio de conferencia y traducilo al {target_name}. "
+        f"El orador habla en '{source}'. "
+        f"La clave 'translated' DEBE estar obligatoriamente traducida al {target_name} ({target}). "
         "No inventes palabras ni completes silencio. "
         "Respondé SOLO un JSON válido con estas claves: "
-        "original (transcripción fiel), translated (traducción), "
-        "source_lang (es o en), target_lang (en o es). "
-        "Si el audio es silencio, ruido o no habla clara, "
-        "original y translated deben ser cadenas vacías."
+        f"original (transcripción textual en {source}), translated (traducción fiel al {target_name}), "
+        f"source_lang ({source}), target_lang ({target}). "
+        "Si el audio es silencio, ruido o no habla clara, original y translated deben ser cadenas vacías."
     )
     try:
         from google.genai import types
@@ -597,6 +621,44 @@ def apply_noise_gate(stage: Stage, audio: np.ndarray) -> Optional[np.ndarray]:
     return audio
 
 
+def split_subtitle_text(text: str, max_chars: int = 65) -> list[str]:
+    text = (text or "").strip()
+    if not text or len(text) <= max_chars:
+        return [text] if text else []
+
+    words = text.split()
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for word in words:
+        word_len = len(word)
+        cand_len = current_len + (1 if current else 0) + word_len
+        has_punctuation = bool(current) and current[-1].endswith((".", "!", "?", ";", ",")) and current_len >= 35
+
+        if cand_len > max_chars or has_punctuation:
+            if current:
+                chunks.append(" ".join(current))
+                current = [word]
+                current_len = word_len
+            else:
+                chunks.append(word)
+                current = []
+                current_len = 0
+        else:
+            current.append(word)
+            current_len = cand_len
+
+    if current:
+        last_str = " ".join(current)
+        if chunks and len(last_str) < 12 and (len(chunks[-1]) + 1 + len(last_str) <= max_chars + 10):
+            chunks[-1] = chunks[-1] + " " + last_str
+        else:
+            chunks.append(last_str)
+
+    return chunks
+
+
 async def stage_worker(stage: Stage) -> None:
     loop = asyncio.get_running_loop()
     log.info("Worker de transcripción activo: %s", stage.stage_id)
@@ -647,21 +709,31 @@ async def stage_worker(stage: Stage) -> None:
         if not text or is_hallucination(text):
             return
 
-        payload = {
-            "stage_id": stage.stage_id,
-            "original": text,
-            "translated": translated,
-            "source_lang": source,
-            "target_lang": target,
-            "ts": time.time(),
-        }
-        log.info("[%s] %s: %s → %s", stage.stage_id, source, text, translated)
-        await broadcast_stage(stage, payload)
+        orig_chunks = split_subtitle_text(text, 65)
+        trans_chunks = split_subtitle_text(translated, 65)
+        count = max(len(orig_chunks), len(trans_chunks), 1)
+
+        for i in range(count):
+            orig_part = orig_chunks[i] if i < len(orig_chunks) else (orig_chunks[-1] if len(orig_chunks) == 1 else "")
+            trans_part = trans_chunks[i] if i < len(trans_chunks) else (trans_chunks[-1] if len(trans_chunks) == 1 else "")
+            if not orig_part and not trans_part:
+                continue
+
+            payload = {
+                "stage_id": stage.stage_id,
+                "original": orig_part,
+                "translated": trans_part,
+                "source_lang": source,
+                "target_lang": target,
+                "ts": time.time() + (i * 0.05),
+            }
+            log.info("[%s] %s (chunk %d/%d): %s → %s", stage.stage_id, source, i + 1, count, orig_part, trans_part)
+            await broadcast_stage(stage, payload)
 
     async def flush_buffer(*, force: bool) -> None:
         if not audio_buffer:
             return
-        voiced_chunks = [c for c in audio_buffer if rms_level(c) > RMS_THRESHOLD]
+        voiced_chunks = list(audio_buffer)
         audio_buffer.clear()
         if not voiced_chunks:
             log.info(
@@ -674,9 +746,9 @@ async def stage_worker(stage: Stage) -> None:
             audio_buffer.extend(voiced_chunks)
             return
         full_audio = np.concatenate(voiced_chunks)
-        if rms_level(full_audio) <= RMS_THRESHOLD:
+        if full_audio.size < MIN_INFER_SAMPLES or rms_level(full_audio) <= (RMS_THRESHOLD * 0.7):
             log.info(
-                "Buffer concatenado sigue en silencio; no se llama al modelo stage=%s",
+                "Buffer concatenado insuficiente o en silencio; no se llama al modelo stage=%s",
                 stage.stage_id,
             )
             return
@@ -687,7 +759,7 @@ async def stage_worker(stage: Stage) -> None:
             try:
                 audio = await asyncio.wait_for(stage.queue.get(), timeout=QUEUE_IDLE_FLUSH_S)
             except asyncio.TimeoutError:
-                # Fin de frase o el emisor pausó: no dejar el buffer colgado.
+                # Fin de micro-frase o pausa del orador: flush inmediato
                 await flush_buffer(force=True)
                 continue
 
@@ -695,8 +767,13 @@ async def stage_worker(stage: Stage) -> None:
             if gated is not None:
                 audio_buffer.append(gated)
 
+            # Control estricto de acumulación:
+            # 1. Silencio detectado tras voz (fin de micro-frase) -> flush inmediato
+            # 2. Tamaño de audio alcanza entre 1.5 y 1.8 segundos -> flush inmediato sin esperar más
+            buffered_samples = sum(c.size for c in audio_buffer)
             end_of_utterance = gated is None and len(audio_buffer) > 0
-            latency_cap = len(audio_buffer) >= FLUSH_AFTER_CHUNKS
+            latency_cap = buffered_samples >= MAX_AUDIO_SAMPLES or len(audio_buffer) >= FLUSH_AFTER_CHUNKS
+
             if end_of_utterance or latency_cap:
                 await flush_buffer(force=True)
 

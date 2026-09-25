@@ -87,19 +87,102 @@ button:hover { background: var(--accent-cyan); color: #000; box-shadow: 0 0 15px
 .orig { font-size: 1.3rem; line-height: 1.5; margin: 0 0 .3rem; font-weight: 500; }
 .tr { font-size: 1.1rem; line-height: 1.5; margin: 0; color: #cbd5e1; }
 body[data-lang="original"] .tr, body[data-lang="translated"] .orig { display: none; }
+body[data-order="translated_first"] .item { display: flex; flex-direction: column; }
+body[data-order="translated_first"] .meta { order: 0; }
+body[data-order="translated_first"] .tr { order: 1; font-size: 1.3rem; color: #fff; font-weight: 500; }
+body[data-order="translated_first"] .orig { order: 2; font-size: 1.1rem; color: #cbd5e1; }
+body.obs[data-order="translated_first"] .tr { font-size: clamp(1.6rem, 4vw, 2.8rem); font-weight: 700; color: #fff; }
+body.obs[data-order="translated_first"] .orig { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fdf5e6; margin-top: 0.2rem; }
 footer { margin-top: 1.5rem; color: var(--muted); font-size: .85rem; text-align: center; }
 footer a { color: var(--accent-cyan); text-decoration: none; }
 
-/* Variante Browser Source / OBS Studio - Mantenida estricta para legibilidad */
-body.obs { background: transparent !important; overflow: hidden; }
-body.obs .wrap { width: min(1100px, calc(100% - 1.2rem)); padding: 0.4rem 0; margin: 0 auto; position: absolute; bottom: 5%; left: 0; right: 0; }
+/* Variante Browser Source / OBS Studio - Flotante, transparente y alto contraste */
+html.obs, body.obs { background: transparent !important; background-color: transparent !important; overflow: hidden; }
+body.obs .wrap { width: min(940px, calc(100% - 2rem)); max-width: 940px; padding: 0; margin: 0 auto; position: absolute; bottom: 4%; left: 0; right: 0; background: transparent !important; pointer-events: none; }
 body.obs header, body.obs .toolbar, body.obs .status, body.obs footer, body.obs .empty { display: none !important; }
-body.obs .board { background: transparent; border: 0; min-height: 0; padding: 0; box-shadow: none; display: flex; flex-direction: column; justify-content: flex-end; max-height: 30vh; overflow: hidden; }
-body.obs .item { margin-bottom: 1rem; text-align: center; }
-body.obs .orig, body.obs .tr { color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,1), 0 0 10px rgba(0,0,0,0.8), -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; font-family: "IBM Plex Sans", sans-serif; }
-body.obs .meta { display: none; /* Ocultamos metadata en OBS para que sea limpio */ }
-body.obs .orig { font-size: clamp(1.6rem, 4vw, 2.8rem); font-weight: 700; }
-body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fdf5e6; margin-top: 0.2rem; }
+body.obs .board { background: transparent !important; background-color: transparent !important; border: 0 !important; min-height: 0 !important; padding: 0 !important; box-shadow: none !important; display: flex; flex-direction: column; justify-content: flex-start; align-items: center; gap: 0.35rem; overflow: hidden; max-width: 100%; }
+
+/* Contorno negro grueso y sombra para legibilidad total sobre fondos claros u oscuros */
+body.obs .orig, body.obs .tr {
+  text-shadow:
+    0 2px 4px #000,
+    0 0 12px rgba(0,0,0,1),
+    -2px -2px 0 #000,
+    2px -2px 0 #000,
+    -2px 2px 0 #000,
+    2px 2px 0 #000,
+    -3px 0 0 #000,
+    3px 0 0 #000,
+    0 -3px 0 #000,
+    0 3px 0 #000;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  margin: 0 auto;
+  max-width: 880px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+body.obs .meta { display: none !important; }
+
+/* Colores: Amarillo de transmisión para el principal, Blanco para el secundario */
+body.obs .orig { color: #FFE600 !important; font-weight: 700; line-height: 1.25; }
+body.obs .tr { color: #FFFFFF !important; font-weight: 600; line-height: 1.3; margin-top: 0.2rem; }
+
+/* Si el usuario elige orden Traducido arriba / Original abajo: */
+body.obs[data-order="translated_first"] .item { display: flex; flex-direction: column; }
+body.obs[data-order="translated_first"] .tr { order: 1; color: #FFE600 !important; font-weight: 700; margin-top: 0; }
+body.obs[data-order="translated_first"] .orig { order: 2; color: #FFFFFF !important; font-weight: 600; margin-top: 0.2rem; }
+
+/* Jerarquía visual en OBS: Lo último arriba (grande y 100%), únicamente una línea previa abajo como eco sutil */
+body.obs .item { width: 100%; max-width: 880px; margin: 0 auto 0.25rem; text-align: center; transition: all 0.25s ease-out; transform-origin: center top; }
+body.obs .item:nth-child(1) {
+  opacity: 1;
+  transform: scale(1);
+}
+body.obs .item:nth-child(1) .orig {
+  font-size: clamp(1.8rem, 4.4vw, 3rem);
+}
+body.obs .item:nth-child(1) .tr {
+  font-size: clamp(1.3rem, 3.2vw, 2.15rem);
+}
+body.obs[data-order="translated_first"] .item:nth-child(1) .tr {
+  font-size: clamp(1.8rem, 4.4vw, 3rem);
+}
+body.obs[data-order="translated_first"] .item:nth-child(1) .orig {
+  font-size: clamp(1.3rem, 3.2vw, 2.15rem);
+}
+
+/* Eco anterior único: mucho más compacto y con 48% de opacidad */
+body.obs .item:nth-child(2) {
+  opacity: 0.48;
+  transform: scale(0.88);
+}
+body.obs .item:nth-child(2) .orig {
+  font-size: clamp(1.05rem, 2.3vw, 1.45rem);
+  font-weight: 600;
+}
+body.obs .item:nth-child(2) .tr {
+  font-size: clamp(0.85rem, 1.8vw, 1.15rem);
+  font-weight: 500;
+}
+body.obs[data-order="translated_first"] .item:nth-child(2) .tr {
+  font-size: clamp(1.05rem, 2.3vw, 1.45rem);
+  font-weight: 600;
+}
+body.obs[data-order="translated_first"] .item:nth-child(2) .orig {
+  font-size: clamp(0.85rem, 1.8vw, 1.15rem);
+  font-weight: 500;
+}
+
+/* Ocultar ABSOLUTAMENTE cualquier 3er o 4to mensaje para eliminar ruido visual (máximo 2 líneas) */
+body.obs .item:nth-child(n+3) {
+  display: none !important;
+}
   </style>
 </head>
 <body>
@@ -128,6 +211,13 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
           <option value="translated">Traducido</option>
         </select>
       </div>
+      <div>
+        <label for="order">Posición</label>
+        <select id="order">
+          <option value="original_first" selected>Original arriba</option>
+          <option value="translated_first">Traducido arriba</option>
+        </select>
+      </div>
       <button id="obsToggle" type="button">Modo OBS</button>
     </div>
 
@@ -151,6 +241,7 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
     const stageSelect = $("stage");
     const stageCustom = $("stageCustom");
     const langSelect = $("lang");
+    const orderSelect = $("order");
     const board = $("board");
     const empty = $("empty");
 
@@ -160,6 +251,10 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
 
     function applyLang(value) {
       document.body.dataset.lang = value;
+    }
+
+    function applyOrder(value) {
+      document.body.dataset.order = value;
     }
 
     function currentStageId() {
@@ -178,6 +273,7 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
         else next.searchParams.delete("obs");
         next.searchParams.set("stage", currentStageId());
         next.searchParams.set("lang", langSelect.value);
+        next.searchParams.set("order", orderSelect.value);
         history.replaceState(null, "", next);
       }
     }
@@ -194,23 +290,130 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
         .replace(/>/g, "&gt;");
     }
 
-    function pushCaption(msg) {
-      if (!msg.original) return;
-      empty.style.display = "none";
+    function splitSubtitleText(text, maxChars = 65) {
+      text = (text || "").trim();
+      if (!text || text.length <= maxChars) return text ? [text] : [];
+      const words = text.split(/\s+/);
+      const chunks = [];
+      let current = [];
+      let currentLen = 0;
+      for (const word of words) {
+        const candLen = currentLen + (current.length ? 1 : 0) + word.length;
+        const hasPunctuation = current.length > 0 && /[,;:.?!]$/.test(current[current.length - 1]) && currentLen >= 35;
+        if (candLen > maxChars || hasPunctuation) {
+          if (current.length) {
+            chunks.push(current.join(" "));
+            current = [word];
+            currentLen = word.length;
+          } else {
+            chunks.push(word);
+            current = [];
+            currentLen = 0;
+          }
+        } else {
+          current.push(word);
+          currentLen = candLen;
+        }
+      }
+      if (current.length) {
+        const lastStr = current.join(" ");
+        if (chunks.length > 0 && lastStr.length < 12 && (chunks[chunks.length - 1].length + 1 + lastStr.length <= maxChars + 10)) {
+          chunks[chunks.length - 1] += " " + lastStr;
+        } else {
+          chunks.push(lastStr);
+        }
+      }
+      return chunks;
+    }
+
+    function createItemElement(msgPart) {
       const item = document.createElement("article");
       item.className = "item";
-      const when = msg.ts ? new Date(msg.ts * 1000).toLocaleTimeString() : "";
+      const when = msgPart.ts ? new Date(msgPart.ts * 1000).toLocaleTimeString() : "";
       item.innerHTML = `
-        <div class="meta">${escapeHtml(msg.stage_id || "")} · ${escapeHtml(msg.source_lang || "")}→${escapeHtml(msg.target_lang || "")} · ${when}</div>
-        <p class="orig">${escapeHtml(msg.original)}</p>
-        <p class="tr">${escapeHtml(msg.translated || "")}</p>
+        <div class="meta">${escapeHtml(msgPart.stage_id || "")} · ${escapeHtml(msgPart.source_lang || "")}→${escapeHtml(msgPart.target_lang || "")} · ${when}</div>
+        <p class="orig">${escapeHtml(msgPart.original)}</p>
+        <p class="tr">${escapeHtml(msgPart.translated || "")}</p>
       `;
-      board.appendChild(item);
-      while (board.querySelectorAll(".item").length > 60) {
-        const first = board.querySelector(".item");
-        if (first) first.remove();
+      return item;
+    }
+
+    // Cola FIFO de reproducción secuencial para evitar "ráfagas" y encimado con baja latencia
+    const subtitleQueue = [];
+    let queueTimer = null;
+    let lastDisplayTimestamp = 0;
+    const MIN_READING_INTERVAL_MS = 700; // 0.7s para aparición rápida y dinámica
+
+    function processQueueTick() {
+      queueTimer = null;
+      if (subtitleQueue.length === 0) return;
+
+      const now = Date.now();
+      const elapsed = now - lastDisplayTimestamp;
+      const pace = subtitleQueue.length > 2 ? 600 : MIN_READING_INTERVAL_MS;
+
+      if (elapsed < pace) {
+        queueTimer = setTimeout(processQueueTick, pace - elapsed);
+        return;
       }
-      item.scrollIntoView({ block: "end", behavior: "smooth" });
+
+      const nextItem = subtitleQueue.shift();
+      if (!nextItem) return;
+
+      lastDisplayTimestamp = Date.now();
+      displaySingleCaption(nextItem);
+
+      if (subtitleQueue.length > 0) {
+        const nextPace = subtitleQueue.length > 2 ? 600 : MIN_READING_INTERVAL_MS;
+        queueTimer = setTimeout(processQueueTick, nextPace);
+      }
+    }
+
+    function displaySingleCaption(msgPart) {
+      empty.style.display = "none";
+      const item = createItemElement(msgPart);
+      board.prepend(item);
+
+      const allItems = board.querySelectorAll(".item");
+      while (allItems.length > 30) {
+        allItems[allItems.length - 1].remove();
+      }
+      if (!document.body.classList.contains("obs")) {
+        board.scrollTop = 0;
+      }
+    }
+
+    function pushCaption(msg) {
+      if (!msg.original && !msg.translated) return;
+
+      const origChunks = splitSubtitleText(msg.original, 65);
+      const transChunks = splitSubtitleText(msg.translated, 65);
+      const count = Math.max(origChunks.length, transChunks.length, 1);
+
+      for (let i = 0; i < count; i++) {
+        const o = origChunks[i] || (origChunks.length === 1 ? origChunks[0] : "");
+        const t = transChunks[i] || (transChunks.length === 1 ? transChunks[0] : "");
+        if (!o && !t) continue;
+
+        // FIFO: Se encolan al final en orden estricto de llegada
+        subtitleQueue.push({
+          stage_id: msg.stage_id,
+          source_lang: msg.source_lang,
+          target_lang: msg.target_lang,
+          original: o,
+          translated: t,
+          ts: (msg.ts || Date.now() / 1000) + (i * 0.05)
+        });
+      }
+
+      // Si la cola se desborda (>8 elementos), descartar los más viejos para evitar lag acumulado
+      if (subtitleQueue.length > 8) {
+        subtitleQueue.splice(0, subtitleQueue.length - 8);
+      }
+
+      if (!queueTimer) {
+        processQueueTick();
+      }
     }
 
     function wsUrl(stageId) {
@@ -271,10 +474,15 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
     function hydrateFromUrl() {
       const stage = params.get("stage");
       const lang = params.get("lang");
+      const order = params.get("order");
       if (lang && ["both", "original", "translated"].includes(lang)) {
         langSelect.value = lang;
       }
+      if (order && ["original_first", "translated_first"].includes(order)) {
+        orderSelect.value = order;
+      }
       applyLang(langSelect.value);
+      applyOrder(orderSelect.value);
       if (stage) {
         if (DEFAULT_STAGES.includes(stage)) {
           stageSelect.value = stage;
@@ -301,6 +509,12 @@ body.obs .tr { font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 500; color: #fd
       applyLang(langSelect.value);
       const next = new URL(location.href);
       next.searchParams.set("lang", langSelect.value);
+      history.replaceState(null, "", next);
+    });
+    orderSelect.addEventListener("change", () => {
+      applyOrder(orderSelect.value);
+      const next = new URL(location.href);
+      next.searchParams.set("order", orderSelect.value);
       history.replaceState(null, "", next);
     });
     $("obsToggle").addEventListener("click", () => {

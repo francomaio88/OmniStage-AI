@@ -65,7 +65,7 @@ En PowerShell:
 winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
 ```
 
-Cerrá y reabrí la terminal y comprobá:
+Cerrá y reabrí la terminal (o Cursor) y comprobá:
 
 ```powershell
 ffmpeg -version
