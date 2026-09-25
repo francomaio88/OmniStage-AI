@@ -207,7 +207,7 @@ footer a:hover { color: var(--accent-magenta); }
   </div>
 
   <script>
-    const CHUNK_MS = 1000;
+    const CHUNK_MS = 4000;
     const TARGET_RATE = 16000;
     const PCM_MAGIC = [0x4f, 0x4d, 0x4e, 0x49, 0x50, 0x43, 0x4d, 0x31]; // OMNIPCM1
 
@@ -235,6 +235,8 @@ footer a:hover { color: var(--accent-magenta); }
     let pcmChunks = [];
     let live = false;
     let usePcmFallback = false;
+    let lastRms = 0;
+    let rmsThreshold = 0.000005;
 
     function wsUrl(path) {
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -290,9 +292,14 @@ footer a:hover { color: var(--accent-magenta); }
       let sum = 0;
       for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
       const rms = Math.sqrt(sum / Math.max(1, samples.length));
+      lastRms = rms;
       const pct = Math.min(100, rms * 280);
       meterBar.style.width = pct + "%";
       meterEl.classList.toggle("hot", rms > 0.25);
+    }
+
+    function isSilentRms(rms) {
+      return !(rms > rmsThreshold);
     }
 
     function appendLine(msg) {
@@ -358,6 +365,9 @@ footer a:hover { color: var(--accent-magenta); }
         ws.onmessage = (ev) => {
           try {
             const data = JSON.parse(ev.data);
+            if (typeof data.rms_threshold === "number") {
+              rmsThreshold = data.rms_threshold;
+            }
             if (data.original) appendLine(data);
           } catch (_) { /* ignore */ }
         };
@@ -366,6 +376,7 @@ footer a:hover { color: var(--accent-magenta); }
 
     async function sendBlob(blob) {
       if (!ws || ws.readyState !== WebSocket.OPEN || !blob.size) return;
+      if (initSegment && isSilentRms(lastRms)) return;
       const buf = await blob.arrayBuffer();
       if (!initSegment) {
         initSegment = buf;
@@ -391,6 +402,10 @@ footer a:hover { color: var(--accent-magenta); }
         offset += part.length;
       }
       pcmChunks = [];
+      let sum = 0;
+      for (let i = 0; i < merged.length; i++) sum += merged[i] * merged[i];
+      const rms = Math.sqrt(sum / Math.max(1, merged.length));
+      if (!(rms > rmsThreshold)) return;
       ws.send(encodePcmFrame(merged, TARGET_RATE));
       chunksSent += 1;
       $("chunkinfo").textContent = `chunks: ${chunksSent}`;

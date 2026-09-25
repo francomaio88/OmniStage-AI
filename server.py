@@ -41,18 +41,18 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 
 SAMPLE_RATE = int(os.getenv("OMNI_SAMPLE_RATE", "16000"))
-RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.000005"))
+RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.005"))
 LOOKBACK_MS = int(os.getenv("OMNI_LOOKBACK_MS", "280"))
 LOOKBACK_SAMPLES = max(1, int(SAMPLE_RATE * LOOKBACK_MS / 1000))
 HANGOVER_CHUNKS = int(os.getenv("OMNI_HANGOVER_CHUNKS", "3"))
-WHISPER_MODEL = os.getenv("OMNI_WHISPER_MODEL", "small")
+WHISPER_MODEL = os.getenv("OMNI_WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.getenv("OMNI_WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE = os.getenv("OMNI_WHISPER_COMPUTE", "int8")
 QUEUE_MAX = int(os.getenv("OMNI_QUEUE_MAX", "6"))
 HOST = os.getenv("OMNI_HOST", "0.0.0.0")
 PORT = int(os.getenv("OMNI_PORT", "8000"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL_NAME = os.getenv("OMNI_GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL_NAME = os.getenv("OMNI_GEMINI_MODEL", "gemini-3.8-flash")
 
 WHISPER_HALLUCINATIONS = {
     "",
@@ -73,7 +73,31 @@ WHISPER_HALLUCINATIONS = {
     "subscribe",
     "mainstre@@",
     "mainstre",
+    "en el próximo vídeo",
+    "en el próximo video",
+    "nos vemos en el próximo",
 }
+
+YOUTUBE_HALLUCINATION_MARKERS = (
+    "próximo vídeo",
+    "proximo video",
+    "próximo video",
+    "thanks for watching",
+    "thank you for watching",
+    "like and subscribe",
+    "don't forget to subscribe",
+    "see you in the next",
+    "nos vemos en el próximo",
+    "en el próximo vídeo",
+    "en el próximo video",
+)
+
+GEMINI_SYSTEM_INSTRUCTION = (
+    "Eres un sistema de transcripción en tiempo real muy estricto. "
+    "Si el audio contiene solo ruido de fondo, silencios, repeticiones vacías "
+    "o no hay habla clara, devuelve una cadena de texto vacía (''). "
+    "No inventes frases ni saluda con muletillas de YouTube."
+)
 
 logging.basicConfig(
     level=os.getenv("OMNI_LOG_LEVEL", "INFO"),
@@ -304,18 +328,25 @@ def normalize_speaker_lang(value: Optional[str]) -> str:
     return code
 
 
+MIN_INFER_SAMPLES = int(0.4 * SAMPLE_RATE)
+FLUSH_AFTER_CHUNKS = 3
+QUEUE_IDLE_FLUSH_S = 1.8
+
+
 def transcribe_sync(audio: np.ndarray, language: str, initial_prompt: str = "") -> tuple[str, str]:
     """Bloqueante: debe ejecutarse en un thread pool. Idioma forzado (sin auto-detect)."""
     language = language if language in ALLOWED_SPEAKER_LANGS else "es"
-    if whisper_model is None or audio.size < int(0.15 * SAMPLE_RATE):
+    if whisper_model is None or audio.size < MIN_INFER_SAMPLES:
         return "", language
     kwargs = {
         "language": language,
-        "beam_size": 1,
-        "vad_filter": True,
-        "without_timestamps": True,
-        "condition_on_previous_text": False,
-        "no_speech_threshold": 0.6,
+        "beam_size": 5,                 
+        "task": "transcribe",           
+        "vad_filter": False,
+        "without_timestamps": True,     
+        "temperature": 0.0,              # <--- AGREGAR ESTO: Evita que invente texto aleatorio
+        "condition_on_previous_text": False, # <--- AGREGAR ESTO: Evita que arrastre bucles anteriores
+        "no_speech_threshold": 0.6,     
     }
     prompt = (initial_prompt or "").strip()
     if prompt:
@@ -340,6 +371,8 @@ def is_hallucination(text: str) -> bool:
     if t in WHISPER_HALLUCINATIONS:
         return True
     if "@@" in t:
+        return True
+    if any(marker in t for marker in YOUTUBE_HALLUCINATION_MARKERS):
         return True
     return len(t) < 2
 
@@ -388,9 +421,12 @@ def _parse_gemini_payload(raw: str) -> dict:
 def transcribe_cloud_sync(audio: np.ndarray, speaker_lang: str) -> tuple[str, str, str, str]:
     """Envía WAV a Gemini (google.genai) y normaliza al mismo JSON que el modo local."""
     source, target = pair_for_lang(speaker_lang)
-    if gemini_client is None or audio.size < int(0.15 * SAMPLE_RATE):
+    if gemini_client is None or audio.size < MIN_INFER_SAMPLES:
         if gemini_client is None:
             print("Error en Gemini: cliente no inicializado (GEMINI_API_KEY)", flush=True)
+        return "", "", source, target
+    if rms_level(audio) <= RMS_THRESHOLD:
+        print("Gemini: skip (RMS de silencio, no se llama a la API)", flush=True)
         return "", "", source, target
     wav = numpy_to_wav_bytes(audio)
     prompt = (
@@ -400,7 +436,8 @@ def transcribe_cloud_sync(audio: np.ndarray, speaker_lang: str) -> tuple[str, st
         "Respondé SOLO un JSON válido con estas claves: "
         "original (transcripción fiel), translated (traducción), "
         "source_lang (es o en), target_lang (en o es). "
-        'Si no hay habla, devolvé original y translated vacíos.'
+        "Si el audio es silencio, ruido o no habla clara, "
+        "original y translated deben ser cadenas vacías."
     )
     try:
         from google.genai import types
@@ -423,8 +460,9 @@ def transcribe_cloud_sync(audio: np.ndarray, speaker_lang: str) -> tuple[str, st
             model=GEMINI_MODEL_NAME,
             contents=contents,
             config=types.GenerateContentConfig(
-                temperature=0.1,
+                temperature=0.0,
                 response_mime_type="application/json",
+                system_instruction=GEMINI_SYSTEM_INSTRUCTION,
             ),
         )
         raw = getattr(response, "text", None) or ""
@@ -442,7 +480,7 @@ def transcribe_cloud_sync(audio: np.ndarray, speaker_lang: str) -> tuple[str, st
     except Exception as e:
         print(f"Error en Gemini: {e}", flush=True)
         log.warning("Fallo Gemini: %s", e)
-        return "", "", source, target
+        return None, None, source, target
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +498,7 @@ class Stage:
     hangover: int = 0
     speaking: bool = False
     speaker_lang: str = "es"
-    engine_mode: str = "cloud"
+    engine_mode: str = "local"
     whisper_context: str = ""
     last_activity: float = field(default_factory=time.time)
 
@@ -497,7 +535,7 @@ async def maybe_dispose_stage(stage_id: str) -> None:
 
 
 async def enqueue_audio(stage: Stage, audio: np.ndarray) -> None:
-    if audio.size == 0:
+    if audio.size == 0 or rms_level(audio) <= RMS_THRESHOLD:
         return
     try:
         stage.queue.put_nowait(audio)
@@ -528,16 +566,15 @@ async def broadcast_stage(stage: Stage, payload: dict) -> None:
 
 def apply_noise_gate(stage: Stage, audio: np.ndarray) -> Optional[np.ndarray]:
     """
-    Umbral RMS + lookback circular + hangover.
+    Umbral RMS estricto: silencio no entra al buffer de transcripción.
 
-    - Silencio: se descarta el chunk (ahorro de CPU) y se guarda en el buffer.
-    - Ataque de voz: se antepone el lookback para no cortar la primera sílaba.
-    - Caída de voz: se transcribe 1 chunk extra (hangover) para no cortar el final.
+    - RMS <= umbral: se descarta al instante (no hangover, no acumulación).
+    - Ataque de voz: se antepone lookback breve solo si también tiene voz.
     """
     level = rms_level(audio)
     peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-    voiced = level >= RMS_THRESHOLD
-    decision = "PASA → Whisper" if voiced else "DESCARTADO (silencio)"
+    voiced = level > RMS_THRESHOLD
+    decision = "PASA" if voiced else "DESCARTADO (silencio)"
     msg = (
         f"[NOISE GATE] stage={stage.stage_id}  rms={level:.8f}  "
         f"peak={peak:.8f}  samples={audio.size}  umbral={RMS_THRESHOLD}  → {decision}"
@@ -545,88 +582,124 @@ def apply_noise_gate(stage: Stage, audio: np.ndarray) -> Optional[np.ndarray]:
     print(msg, flush=True)
     log.info(msg)
 
-    if voiced:
-        prefix = stage.lookback.dump() if not stage.speaking else np.zeros(0, dtype=np.float32)
-        stage.lookback.clear()
-        stage.speaking = True
-        stage.hangover = HANGOVER_CHUNKS
-        if prefix.size:
-            return np.concatenate((prefix, audio))
-        return audio
+    if not voiced:
+        stage.speaking = False
+        stage.hangover = 0
+        stage.lookback.push(audio)
+        return None
 
-    if stage.speaking and stage.hangover > 0:
-        stage.hangover -= 1
-        return audio
-
-    stage.speaking = False
+    prefix = stage.lookback.dump() if not stage.speaking else np.zeros(0, dtype=np.float32)
+    stage.lookback.clear()
+    stage.speaking = True
     stage.hangover = 0
-    stage.lookback.push(audio)
-    log.debug("Noise gate: silencio rms=%.4f stage=%s", level, stage.stage_id)
-    return None
+    if prefix.size and rms_level(prefix) > RMS_THRESHOLD:
+        return np.concatenate((prefix, audio))
+    return audio
 
 
 async def stage_worker(stage: Stage) -> None:
     loop = asyncio.get_running_loop()
     log.info("Worker de transcripción activo: %s", stage.stage_id)
-    
-    # AQUÍ ESTÁ LA MAGIA: Un buffer para guardar el audio mientras hablas
-    audio_buffer = [] 
-    
+    audio_buffer: list[np.ndarray] = []
+
+    async def infer_and_broadcast(full_audio: np.ndarray) -> None:
+        if full_audio.size < MIN_INFER_SAMPLES or rms_level(full_audio) <= RMS_THRESHOLD:
+            log.info(
+                "Skip inferencia (silencio o corto: samples=%d rms=%.8f) stage=%s",
+                full_audio.size,
+                rms_level(full_audio) if full_audio.size else 0.0,
+                stage.stage_id,
+            )
+            return
+        speaker_lang = stage.speaker_lang
+        fallback_local = False
+
+        # INTENTO 1: Nube (Gemini)
+        if stage.engine_mode == "cloud":
+            text, translated, source, target = await loop.run_in_executor(
+                None, transcribe_cloud_sync, full_audio, speaker_lang
+            )
+            if text is None:
+                log.warning("Saturación en Gemini (503). Activando failover transparente a Whisper local.")
+                fallback_local = True
+            else:
+                text = (text or "").strip()
+                translated = (translated or "").strip()
+
+        # INTENTO 2: Local (Whisper) - Por elección del usuario o por caída de la nube
+        if stage.engine_mode == "local" or fallback_local:
+            text, detected = await loop.run_in_executor(
+                None,
+                transcribe_sync,
+                full_audio,
+                speaker_lang or "es",
+                stage.whisper_context,
+            )
+            text = (text or "").strip()
+            if not text or is_hallucination(text):
+                return
+            source, target = pair_for_lang(detected or speaker_lang)
+            translated = await loop.run_in_executor(
+                None, translate_text, text, source, target
+            )
+            translated = (translated or "").strip()
+
+        if not text or is_hallucination(text):
+            return
+
+        payload = {
+            "stage_id": stage.stage_id,
+            "original": text,
+            "translated": translated,
+            "source_lang": source,
+            "target_lang": target,
+            "ts": time.time(),
+        }
+        log.info("[%s] %s: %s → %s", stage.stage_id, source, text, translated)
+        await broadcast_stage(stage, payload)
+
+    async def flush_buffer(*, force: bool) -> None:
+        if not audio_buffer:
+            return
+        voiced_chunks = [c for c in audio_buffer if rms_level(c) > RMS_THRESHOLD]
+        audio_buffer.clear()
+        if not voiced_chunks:
+            log.info(
+                "Buffer vacío de voz (todo silencio); no se llama al modelo stage=%s",
+                stage.stage_id,
+            )
+            return
+        buffered = sum(chunk.size for chunk in voiced_chunks)
+        if not force and buffered < MIN_INFER_SAMPLES:
+            audio_buffer.extend(voiced_chunks)
+            return
+        full_audio = np.concatenate(voiced_chunks)
+        if rms_level(full_audio) <= RMS_THRESHOLD:
+            log.info(
+                "Buffer concatenado sigue en silencio; no se llama al modelo stage=%s",
+                stage.stage_id,
+            )
+            return
+        await infer_and_broadcast(full_audio)
+
     try:
         while True:
-            audio = await stage.queue.get()
+            try:
+                audio = await asyncio.wait_for(stage.queue.get(), timeout=QUEUE_IDLE_FLUSH_S)
+            except asyncio.TimeoutError:
+                # Fin de frase o el emisor pausó: no dejar el buffer colgado.
+                await flush_buffer(force=True)
+                continue
+
             gated = apply_noise_gate(stage, audio)
-            
-            # Si el Noise Gate dice que estás hablando, guardamos el pedacito de audio
             if gated is not None:
                 audio_buffer.append(gated)
-                
-            # ¿Cuándo traducimos? (AHORA SÍ ESTÁ DENTRO DEL WHILE)
-            # 1. Si hubo silencio (gated es None) y hay algo grabado.
-            # 2. O si el buffer alcanzó nuestro límite de latencia (3 chunks).
-            if (gated is None and len(audio_buffer) > 0) or len(audio_buffer) >= 3:
-                # Unimos todos los pedacitos en una sola grabación completa
-                full_audio = np.concatenate(audio_buffer)
-                audio_buffer.clear() # Vaciamos el buffer para tu próxima frase
-                
-                speaker_lang = stage.speaker_lang
-                if stage.engine_mode == "cloud":
-                    text, translated, source, target = await loop.run_in_executor(
-                        None, transcribe_cloud_sync, full_audio, speaker_lang
-                    )
-                    text = (text or "").strip()
-                    translated = (translated or "").strip()
-                else:
-                    text, detected = await loop.run_in_executor(
-                        None,
-                        transcribe_sync,
-                        full_audio,
-                        speaker_lang or "es",
-                        stage.whisper_context,
-                    )
-                    text = (text or "").strip()
-                    if not text or is_hallucination(text):
-                        continue
-                    source, target = pair_for_lang(detected or speaker_lang)
-                    translated = await loop.run_in_executor(
-                        None, translate_text, text, source, target
-                    )
-                    translated = (translated or "").strip()
 
-                if not text or is_hallucination(text):
-                    continue
-                
-                payload = {
-                    "stage_id": stage.stage_id,
-                    "original": text,
-                    "translated": translated,
-                    "source_lang": source,
-                    "target_lang": target,
-                    "ts": time.time(),
-                }
-                log.info("[%s] %s: %s → %s", stage.stage_id, source, text, translated)
-                await broadcast_stage(stage, payload)
-                
+            end_of_utterance = gated is None and len(audio_buffer) > 0
+            latency_cap = len(audio_buffer) >= FLUSH_AFTER_CHUNKS
+            if end_of_utterance or latency_cap:
+                await flush_buffer(force=True)
+
     except asyncio.CancelledError:
         log.info("Worker detenido: %s", stage.stage_id)
         raise
@@ -651,7 +724,7 @@ async def lifespan(_app: FastAPI):
     translator_pipelines = await loop.run_in_executor(None, load_translators)
     whisper_model = await loop.run_in_executor(None, load_whisper)
     log.info(
-        "OmniStage listo | modelo=%s | rms_threshold=%.4f | lookback=%dms",
+        "OmniStage listo | modelo=%s | rms_threshold=%.8f | lookback=%dms",
         WHISPER_MODEL,
         RMS_THRESHOLD,
         LOOKBACK_MS,
