@@ -1,132 +1,158 @@
 # OmniStage AI
 
-Plataforma open source de **transcripción simultánea a escala** para conferencias. Nació para la **Nerdearla Vibeathon**: un emisor por escenario, una audiencia ilimitada por WebSocket, y **cero costo de APIs comerciales** porque el reconocimiento y la traducción corren en el edge.
+Plataforma **multitenant** de transcripción y traducción simultánea en el **edge**.
 
-OmniStage recibe audio del micrófono, descarta el silencio con un noise gate RMS (más un buffer circular de lookback para no cortar la primera sílaba), transcribe con **faster-whisper** y traduce **Español ↔ Inglés** con **Argos Translate**. El JSON `{original, translated}` se publica solo a quienes están mirando ese `stage_id`.
+Creada para la **[Nerdearla Vibeathon](https://nerdear.la/)**: varias salas al mismo tiempo, un emisor por escenario, audiencia ilimitada por WebSocket, y un overlay listo para **OBS Studio**. El camino principal es **100% local y gratuito**: el audio no sale del recinto y no hay factura de APIs comerciales.
+
+Un orador habla al micrófono. OmniStage recorta el silencio, transcribe en el idioma del escenario y publica JSON `{original, translated, source_lang, target_lang}` solo a quienes están mirando ese `stage_id`.
+
+---
+
+## Características
+
+- **Backend asíncrono** con **FastAPI** y **WebSockets** (`/ws/broadcaster/{stage_id}` y `/ws/audience/{stage_id}`). Cada escenario tiene su propia cola, su worker y su fan-out de sockets.
+- **IA local y gratuita en CPU**: **faster-whisper** (modelo **`base`**, `int8`) para transcribir y **Helsinki-NLP** (`Helsinki-NLP/opus-mt-es-en` y `en-es`) para traducir Español ↔ Inglés. Después de la primera descarga de modelos, el nodo puede trabajar offline.
+- **VAD propio** (no solo el de Whisper): umbral RMS + **lookback circular** (~280 ms) para no cortar la primera sílaba + **hangover** de chunks para no cortar el final de la frase.
+- **UI para OBS**: `audience.html` admite fondo transparente, tipografía con `text-shadow` y query `?obs=1`. `broadcaster.html` es la consola del emisor (micrófono, idioma, modo, eco de líneas).
+- **Multitenant in-process**: el audio de `nerdearla-sala-2` nunca llega a quien está suscripto a `nerdearla-main`.
+- **Modo nube opcional** (Gemini) con un switch en el emisor. Requiere `GEMINI_API_KEY`. El diseño de la Vibeathon prioriza el modo **Local**.
+
+---
+
+## Arquitectura
+
+```
+Micrófono ──MediaRecorder / PCM──► /ws/broadcaster/{stage_id}
+                                         │
+                              decode (ffmpeg o PCM)
+                                         │
+                         Noise gate RMS + lookback + hangover
+                                         │
+                    ┌────────────────────┴────────────────────┐
+                    │                                         │
+             Local (edge, CPU)                         Nube (opcional)
+      faster-whisper  modelo base                 Gemini (audio WAV)
+      Helsinki-NLP  es ↔ en
+                    │                                         │
+                    └────────────────────┬────────────────────┘
+                                         │
+                              JSON {original, translated}
+                                         │
+                         /ws/audience/{stage_id} ──► navegador / OBS
+```
+
+Un proceso FastAPI mantiene `stage_id → Stage`. El audio pesado queda en el nodo; a la audiencia solo viaja texto.
+
+---
 
 ## Requisitos
 
-- Python 3.10 o superior
-- [ffmpeg](https://ffmpeg.org/) en el `PATH` (recomendado para decodificar los chunks WebM/Opus de `MediaRecorder`). Si no está, el emisor envía PCM 16 kHz como respaldo.
+- **Python 3.11** (3.10+ también sirve)
+- **FFmpeg en el PATH** — imprescindible para decodificar los micro-fragmentos WebM/Opus que manda el emisor. Si no está, el cliente cae a PCM 16 kHz como respaldo, pero el camino local “de verdad” usa FFmpeg.
 - Micrófono y un navegador moderno (Chrome, Edge o Firefox)
+- CPU con RAM suficiente para Whisper `base` + MarianMT (la primera corrida descarga los modelos)
 
-### ffmpeg en Windows
+---
+
+## Instalación paso a paso (Windows)
+
+### 1. FFmpeg
+
+En PowerShell:
 
 ```powershell
-winget install Gyan.FFmpeg
+winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
 ```
 
-Cerrá y reabrí la terminal para que el `PATH` se actualice.
-
-## Instalación local
+Cerrá y reabrí la terminal (o Cursor) y comprobá:
 
 ```powershell
-cd C:\Users\franc\Desktop\OmniStage_AI
+ffmpeg -version
+```
+
+### 2. Entorno virtual y dependencias
+
+```powershell
+cd C:\Users\Mateo\Desktop\OmniStage_AI
+
 python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-python server.py
 ```
 
-La primera arrancada descarga el modelo Whisper (`tiny` por defecto, ~75 MB) y los pares de Argos `es↔en`. Después el nodo queda offline.
+`requirements.txt` instala FastAPI, Uvicorn, faster-whisper, PyTorch, Transformers (Helsinki-NLP) y `google-genai` para el modo nube opcional.
 
-Abrí:
+### 3. Arrancar el servidor con Uvicorn
 
-- Emisor: [http://127.0.0.1:8000/broadcaster](http://127.0.0.1:8000/broadcaster)
-- Audiencia: [http://127.0.0.1:8000/audience](http://127.0.0.1:8000/audience)
-- Salud del nodo: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+Con el venv **activado**:
 
-En otra máquina de la LAN usá la IP del host (`http://192.168.x.x:8000/...`). El WebSocket toma el host de la página.
+```powershell
+$env:OMNI_WHISPER_MODEL="base"
+$env:OMNI_WHISPER_DEVICE="cpu"
+$env:OMNI_WHISPER_COMPUTE="int8"
 
-### Variables de entorno
+uvicorn server:app --host 0.0.0.0 --port 8000
+```
 
-| Variable | Default | Rol |
-|---|---|---|
-| `OMNI_WHISPER_MODEL` | `tiny` | `tiny` o `base` (más calidad, más CPU) |
-| `OMNI_WHISPER_DEVICE` | `cpu` | `cpu` o `cuda` |
-| `OMNI_WHISPER_COMPUTE` | `int8` | `int8` en CPU, `float16` en GPU |
-| `OMNI_RMS_THRESHOLD` | `0.015` | Umbral del noise gate |
-| `OMNI_LOOKBACK_MS` | `280` | Lookback para no cortar la primera sílaba |
-| `OMNI_PORT` | `8000` | Puerto HTTP/WS |
-
-Ejemplo con el modelo `base`:
+Equivalente (usa el mismo `uvicorn.run` interno):
 
 ```powershell
 $env:OMNI_WHISPER_MODEL="base"
 python server.py
 ```
 
+La primera vez descarga **faster-whisper `base`** y los Marian **es↔en**. Esperá a ver en el log que el traductor y Whisper están listos.
+
+Abrí:
+
+| Rol | URL |
+|---|---|
+| Home | http://127.0.0.1:8000/ |
+| Emisor | http://127.0.0.1:8000/broadcaster |
+| Audiencia | http://127.0.0.1:8000/audience |
+| Salud | http://127.0.0.1:8000/health |
+
+En otra máquina de la LAN usá la IP del host (`http://192.168.x.x:8000/...`). El WebSocket toma el host de la página.
+
+---
+
 ## Cómo se usa en una sala
 
-1. El orador abre `/broadcaster`, escribe un `stage_id` (por ejemplo `nerdearla-main`) y pulsa **Iniciar micrófono**.
-2. `MediaRecorder` corta el audio cada 1,5 s y lo manda por `/ws/broadcaster/{stage_id}`.
-3. El servidor mide el RMS. Si el chunk está por debajo del umbral, se descarta y solo se conserva un lookback circular. Si hay voz, se antepone ese lookback y se manda a Whisper.
-4. La audiencia abre `/audience`, elige el mismo escenario y el modo de lectura: **Original**, **Traducido** o **Ambos**.
+1. El orador abre `/broadcaster`, deja **Modo Local**, elige idioma (Español o Inglés) y un `stage_id` (por ejemplo `nerdearla-main`).
+2. Pulsa **Iniciar micrófono**. El navegador corta audio ~1 s y lo manda por WebSocket.
+3. El servidor aplica el noise gate. Silencio → se descarta y se guarda lookback. Voz → lookback + hangover → Whisper `base` → Helsinki-NLP.
+4. La audiencia abre `/audience`, elige el **mismo** escenario y el idioma de lectura: Original, Traducido o Ambos.
 
-### Browser Source en OBS Studio
+### Overlay en OBS Studio
 
-En OBS: *Fuentes → Browser*, URL:
+*Fuentes → Browser*, URL:
 
 ```
 http://127.0.0.1:8000/audience?obs=1&stage=nerdearla-main&lang=both
 ```
 
-El modo OBS usa fondo transparente y `text-shadow` para que los subtítulos se lean sobre la cámara o las diapositivas. También podés activarlo con el botón **Modo OBS** en la propia página.
+Fondo transparente, header y toolbar ocultos, subtítulos con sombra para leerse sobre cámara o slides. El botón **Modo OBS** en la propia página hace lo mismo.
 
-## Arquitectura
+---
 
-```
-Micrófono ──MediaRecorder──► /ws/broadcaster/{stage_id}
-                                    │
-                            Noise gate RMS
-                            + lookback circular
-                                    │
-                         faster-whisper (tiny/base)
-                                    │
-                      Argos Translate (es ↔ en)
-                                    │
-                         /ws/audience/{stage_id} ──► navegadores / OBS
-```
+## Variables de entorno
 
-Un proceso FastAPI mantiene un mapa `stage_id → Stage`. Cada escenario tiene su cola `asyncio`, su worker de transcripción y su conjunto de sockets de audiencia. Los escenarios no se mezclan: el audio de `sala-2` nunca llega a quien está suscripto a `nerdearla-main`.
+| Variable | Default en código | Rol |
+|---|---|---|
+| `OMNI_WHISPER_MODEL` | `small` | Usá **`base`** para la demo local en CPU |
+| `OMNI_WHISPER_DEVICE` | `cpu` | `cpu` o `cuda` |
+| `OMNI_WHISPER_COMPUTE` | `int8` | `int8` en CPU, `float16` en GPU |
+| `OMNI_RMS_THRESHOLD` | `0.02` | Umbral del noise gate |
+| `OMNI_LOOKBACK_MS` | `280` | Lookback para no cortar el ataque de voz |
+| `OMNI_HANGOVER_CHUNKS` | `3` | Chunks extra al caer la voz |
+| `OMNI_HOST` / `OMNI_PORT` | `0.0.0.0` / `8000` | Bind de Uvicorn |
+| `GEMINI_API_KEY` | vacío | Solo si activás Modo Nube |
+| `OMNI_GEMINI_MODEL` | `gemini-2.5-flash` | Modelo cloud opcional |
 
-## Escalabilidad: varios escenarios, costo de API = 0
-
-Esta solución escala **horizontalmente por escenario**, no por request a un proveedor de nube.
-
-Whisper y Argos viven dentro del contenedor. No hay tokens de Google/OpenAI/DeepL, no hay facturación por minuto y no hay datos de voz saliendo del recinto. Eso es **Edge AI**: el modelo viaja hacia el evento, no el audio hacia una API.
-
-Un diseño de producción para una conferencia con N salas:
-
-1. **Un contenedor (o un pequeño pool) por `stage_id`.** Cada réplica carga `tiny` o `base` una sola vez y atiende a un emisor + N espectadores. El cuello de botella es CPU/RAM del nodo, no una cuota de API.
-2. **Docker / Compose / Kubernetes** empaquetan `server.py`, el modelo y ffmpeg. En GPU se cambia `OMNI_WHISPER_DEVICE=cuda`.
-3. **El balanceador enruta por path.** ` /ws/broadcaster/nerdearla-main` y `/ws/audience/nerdearla-main` deben caer siempre en el mismo proceso (sticky session por `stage_id`, o un servicio dedicado `omnistage-main`). Los WebSockets no se pueden repartir al azar entre workers sin un bus compartido.
-4. **Si hace falta más de un worker en el mismo stage**, se publica el JSON en Redis Pub/Sub o NATS. El audio pesado sigue siendo local; solo viaja texto.
-5. **La audiencia es barata.** Replicar un frame JSON a cientos de sockets es órdenes de magnitud más liviano que transcribir. Se puede separar el nodo de STT del nodo de fan-out.
-6. **Auto-escala por salas activas**, no por espectadores: 8 escenarios = 8 contenedores. Apagar una sala libera el modelo.
-
-En un Vibeathon esto cabe en una notebook. En un evento de varios escenarios, el mismo código se replica detrás de un reverse proxy. El costo marginal de un minuto extra de charla es electricidad, no una factura de API.
-
-## Roadmap
-
-### Fase 1 (esta entrega)
-
-- Transcripción local con faster-whisper
-- Traducción es ↔ en con Argos
-- Noise gate RMS + lookback
-- WebSockets multitenant
-- Overlay OBS
-
-### Fase 2
-
-- **Gemma 2 (2B)** (modelos abiertos de Google DeepMind) sobre los textos ya transcritos para resúmenes automáticos por bloque, títulos de sala y un digest al cierre de cada charla. Gemma entra *después* de Whisper: no toca el audio y cabe en el mismo edge.
-- **MediaPipe** para avatares de lengua de señas: a partir del texto (o de landmarks de un intérprete) generar una capa visual accesible, también en el navegador o en un sidecar, sin mandar video a un proveedor.
-
-## 🤖 AI-Assisted Development
-
-El código de este repositorio fue **co-creado con IA** (asistencia de un agente de programación para boilerplate, frontends y el cableado de FastAPI).
-
-El diseño de la **arquitectura multitenant por `stage_id`**, el **noise gate con lookback circular** y la decisión de correr **Edge AI** (Whisper + Argos en el propio nodo para que el costo de API sea cero) son **trabajo humano**: son las restricciones de una conferencia real —varias salas, presupuesto cero de APIs, datos que no salen del recinto— las que definen el sistema.
+---
 
 ## Licencia
 
