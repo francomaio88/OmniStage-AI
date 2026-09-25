@@ -11,15 +11,18 @@ El audio nunca viaja a una API comercial: Whisper y Helsinki-NLP (transformers) 
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import threading
 import time
+import wave
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Optional
@@ -38,7 +41,7 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 
 SAMPLE_RATE = int(os.getenv("OMNI_SAMPLE_RATE", "16000"))
-RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.05"))
+RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.02"))
 LOOKBACK_MS = int(os.getenv("OMNI_LOOKBACK_MS", "280"))
 LOOKBACK_SAMPLES = max(1, int(SAMPLE_RATE * LOOKBACK_MS / 1000))
 HANGOVER_CHUNKS = int(os.getenv("OMNI_HANGOVER_CHUNKS", "3"))
@@ -48,6 +51,8 @@ WHISPER_COMPUTE = os.getenv("OMNI_WHISPER_COMPUTE", "int8")
 QUEUE_MAX = int(os.getenv("OMNI_QUEUE_MAX", "6"))
 HOST = os.getenv("OMNI_HOST", "0.0.0.0")
 PORT = int(os.getenv("OMNI_PORT", "8000"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL_NAME = os.getenv("OMNI_GEMINI_MODEL", "gemini-2.5-flash")
 
 WHISPER_HALLUCINATIONS = {
     "",
@@ -66,6 +71,8 @@ WHISPER_HALLUCINATIONS = {
     "inscreva-se",
     "subtitles by",
     "subscribe",
+    "mainstre@@",
+    "mainstre",
 }
 
 logging.basicConfig(
@@ -209,6 +216,7 @@ async def decode_audio_chunk(payload: bytes) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 whisper_model = None
+gemini_client = None
 translator_pipelines: dict[tuple[str, str], dict] = {}
 _translator_lock = threading.Lock()
 # MODIFICADO: Eliminados los pares de portugués para el MVP
@@ -296,22 +304,25 @@ def normalize_speaker_lang(value: Optional[str]) -> str:
     return code
 
 
-def transcribe_sync(audio: np.ndarray, language: str) -> tuple[str, str]:
-    """Bloqueante: debe ejecutarse en un thread pool."""
+def transcribe_sync(audio: np.ndarray, language: str, initial_prompt: str = "") -> tuple[str, str]:
+    """Bloqueante: debe ejecutarse en un thread pool. Idioma forzado (sin auto-detect)."""
+    language = language if language in ALLOWED_SPEAKER_LANGS else "es"
     if whisper_model is None or audio.size < int(0.15 * SAMPLE_RATE):
         return "", language
-    segments, info = whisper_model.transcribe(
-        audio,
-        language=language,
-        beam_size=1,
-        vad_filter=True,
-        without_timestamps=True,
-        condition_on_previous_text=False,
-        no_speech_threshold=0.65,
-        initial_prompt="A continuación se muestra una transcripción precisa del audio:"
-    )
+    kwargs = {
+        "language": language,
+        "beam_size": 1,
+        "vad_filter": True,
+        "without_timestamps": True,
+        "condition_on_previous_text": False,
+        "no_speech_threshold": 0.6,
+    }
+    prompt = (initial_prompt or "").strip()
+    if prompt:
+        kwargs["initial_prompt"] = prompt[:500]
+    segments, info = whisper_model.transcribe(audio, **kwargs)
     text = " ".join(seg.text.strip() for seg in segments).strip()
-    lang = language or (info.language or "").lower()
+    lang = language or (info.language or "es").lower()
     return text, lang
 
 
@@ -325,7 +336,113 @@ def pair_for_lang(detected: str) -> tuple[str, str]:
 
 
 def is_hallucination(text: str) -> bool:
-    return text.strip().lower() in WHISPER_HALLUCINATIONS
+    t = text.strip().lower()
+    if t in WHISPER_HALLUCINATIONS:
+        return True
+    if "@@" in t:
+        return True
+    return len(t) < 2
+
+
+def normalize_mode(value: Optional[str]) -> str:
+    code = (value or "local").strip().lower()
+    if code in {"cloud", "nube", "gemini"}:
+        return "cloud"
+    return "local"
+
+
+def load_gemini():
+    if not GEMINI_API_KEY:
+        log.warning("GEMINI_API_KEY no definida; el modo nube no estará disponible")
+        return None
+    from google import genai
+
+    client = genai.Client()
+    log.info("Gemini listo para modo nube: %s", GEMINI_MODEL_NAME)
+    return client
+
+
+def numpy_to_wav_bytes(audio: np.ndarray) -> bytes:
+    pcm = np.clip(np.ascontiguousarray(audio, dtype=np.float32), -1.0, 1.0)
+    pcm_i16 = (pcm * 32767.0).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm_i16.tobytes())
+    return buf.getvalue()
+
+
+def _parse_gemini_payload(raw: str) -> dict:
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
+        raw = re.sub(r"```$", "", raw).strip()
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("Gemini no devolvió un objeto JSON")
+    return data
+
+
+def transcribe_cloud_sync(audio: np.ndarray, speaker_lang: str) -> tuple[str, str, str, str]:
+    """Envía WAV a Gemini (google.genai) y normaliza al mismo JSON que el modo local."""
+    source, target = pair_for_lang(speaker_lang)
+    if gemini_client is None or audio.size < int(0.15 * SAMPLE_RATE):
+        if gemini_client is None:
+            print("Error en Gemini: cliente no inicializado (GEMINI_API_KEY)", flush=True)
+        return "", "", source, target
+    wav = numpy_to_wav_bytes(audio)
+    prompt = (
+        "Transcribí este audio de una conferencia y traducilo. "
+        f"El orador habla principalmente en '{speaker_lang}'. "
+        "No inventes palabras ni completes silencio. "
+        "Respondé SOLO un JSON válido con estas claves: "
+        "original (transcripción fiel), translated (traducción), "
+        "source_lang (es o en), target_lang (en o es). "
+        'Si no hay habla, devolvé original y translated vacíos.'
+    )
+    try:
+        from google.genai import types
+
+        text_part = types.Part(text=prompt)
+        audio_part = types.Part(
+            inline_data=types.Blob(data=wav, mime_type="audio/wav"),
+        )
+        contents = [
+            types.Content(
+                role="user",
+                parts=[text_part, audio_part],
+            )
+        ]
+        print(
+            f"Gemini: enviando {len(wav)} bytes WAV, samples={audio.size}, model={GEMINI_MODEL_NAME}",
+            flush=True,
+        )
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+            ),
+        )
+        raw = getattr(response, "text", None) or ""
+        if not raw:
+            feedback = getattr(response, "prompt_feedback", None)
+            print(f"Error en Gemini: respuesta vacía prompt_feedback={feedback}", flush=True)
+            return "", "", source, target
+        data = _parse_gemini_payload(raw)
+        original = str(data.get("original") or "").strip()
+        translated = str(data.get("translated") or "").strip()
+        src = str(data.get("source_lang") or source).strip().lower()[:2] or source
+        tgt = str(data.get("target_lang") or target).strip().lower()[:2] or target
+        print(f"Gemini OK: {original[:80]!r}", flush=True)
+        return original, translated, src, tgt
+    except Exception as e:
+        print(f"Error en Gemini: {e}", flush=True)
+        log.warning("Fallo Gemini: %s", e)
+        return "", "", source, target
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +460,8 @@ class Stage:
     hangover: int = 0
     speaking: bool = False
     speaker_lang: str = "es"
+    engine_mode: str = "local"
+    whisper_context: str = ""
     last_activity: float = field(default_factory=time.time)
 
     def touch(self) -> None:
@@ -471,18 +590,31 @@ async def stage_worker(stage: Stage) -> None:
                 audio_buffer.clear() # Vaciamos el buffer para tu próxima frase
                 
                 speaker_lang = stage.speaker_lang
-                # Mandamos la frase completa a Whisper
-                text, detected = await loop.run_in_executor(
-                    None, transcribe_sync, full_audio, speaker_lang
-                )
-                text = (text or "").strip()
+                if stage.engine_mode == "cloud":
+                    text, translated, source, target = await loop.run_in_executor(
+                        None, transcribe_cloud_sync, full_audio, speaker_lang
+                    )
+                    text = (text or "").strip()
+                    translated = (translated or "").strip()
+                else:
+                    text, detected = await loop.run_in_executor(
+                        None,
+                        transcribe_sync,
+                        full_audio,
+                        speaker_lang or "es",
+                        stage.whisper_context,
+                    )
+                    text = (text or "").strip()
+                    if not text or is_hallucination(text):
+                        continue
+                    source, target = pair_for_lang(detected or speaker_lang)
+                    translated = await loop.run_in_executor(
+                        None, translate_text, text, source, target
+                    )
+                    translated = (translated or "").strip()
+
                 if not text or is_hallucination(text):
                     continue
-                
-                # Mandamos la frase completa a traducir
-                source, target = pair_for_lang(detected or speaker_lang)
-                translated = await loop.run_in_executor(None, translate_text, text, source, target)
-                translated = (translated or "").strip()
                 
                 payload = {
                     "stage_id": stage.stage_id,
@@ -506,7 +638,7 @@ async def stage_worker(stage: Stage) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global whisper_model, translator_pipelines
+    global whisper_model, translator_pipelines, gemini_client
     if FFMPEG_BIN:
         log.info("ffmpeg encontrado: %s", FFMPEG_BIN)
     else:
@@ -515,6 +647,7 @@ async def lifespan(_app: FastAPI):
             "instalar ffmpeg habilita la decodificación nativa de WebM/Opus."
         )
     loop = asyncio.get_running_loop()
+    gemini_client = await loop.run_in_executor(None, load_gemini)
     translator_pipelines = await loop.run_in_executor(None, load_translators)
     whisper_model = await loop.run_in_executor(None, load_whisper)
     log.info(
@@ -561,19 +694,20 @@ async def home() -> HTMLResponse:
     :root { color-scheme: dark; }
     body { margin:0; min-height:100vh; display:grid; place-items:center;
            font-family: "IBM Plex Sans", system-ui, sans-serif;
-           background:#0e1116; color:#f4efe4; }
-    main { text-align:center; padding:2rem; }
-    h1 { font-weight:600; letter-spacing:.04em; margin:0 0 .4rem; }
-    p { color:#b8b0a1; margin:0 0 1.6rem; }
+           background:#0b0f19; color:#f8fafc; }
+    main { text-align:center; padding:2rem; max-width: 560px; }
+    img { width: min(280px, 70vw); height: auto; object-fit: contain;
+          background: transparent; margin-bottom: 1rem; }
+    p { color:#94a3b8; margin:0 0 1.6rem; }
     nav { display:flex; gap:.8rem; justify-content:center; flex-wrap:wrap; }
-    a { color:#0e1116; background:#e8b86d; text-decoration:none;
-        padding:.75rem 1.2rem; border-radius:999px; font-weight:600; }
-    a.ghost { background:transparent; color:#e8b86d; border:1px solid #e8b86d; }
+    a { color:#0b0f19; background: linear-gradient(135deg, #00F2FE, #4FACFE);
+        text-decoration:none; padding:.75rem 1.2rem; border-radius:999px; font-weight:600; }
+    a.ghost { background:transparent; color:#00F2FE; border:1px solid #00F2FE; }
   </style>
 </head>
 <body>
   <main>
-    <h1>OmniStage AI</h1>
+    <img src="/logo.png" alt="OmniStage AI"/>
     <p>Transcripción simultánea en el edge · Nerdearla Vibeathon</p>
     <nav>
       <a href="/broadcaster">Emisor</a>
@@ -583,6 +717,16 @@ async def home() -> HTMLResponse:
 </body>
 </html>"""
     )
+
+
+@app.get("/logo.png")
+async def logo_png() -> FileResponse:
+    return FileResponse(os.path.join(ROOT_DIR, "logo.png"), media_type="image/png")
+
+
+@app.get("/logo.jpeg")
+async def logo_jpeg() -> FileResponse:
+    return FileResponse(os.path.join(ROOT_DIR, "logo.jpeg"), media_type="image/jpeg")
 
 
 @app.get("/broadcaster")
@@ -603,6 +747,7 @@ async def health() -> JSONResponse:
             "whisper_model": WHISPER_MODEL,
             "whisper_loaded": whisper_model is not None,
             "ffmpeg": bool(FFMPEG_BIN),
+            "gemini_ready": gemini_client is not None,
             "stages": sorted(stages.keys()),
             "rms_threshold": RMS_THRESHOLD,
         }
@@ -619,6 +764,7 @@ async def list_stages() -> JSONResponse:
                 "audience": len(stage.audience),
                 "broadcasters": len(stage.broadcasters),
                 "speaker_lang": stage.speaker_lang,
+                "mode": stage.engine_mode,
                 "last_activity": stage.last_activity,
             }
         )
@@ -626,32 +772,46 @@ async def list_stages() -> JSONResponse:
 
 
 @app.websocket("/ws/broadcaster/{stage_id}")
-async def ws_broadcaster(websocket: WebSocket, stage_id: str, lang: str = "es") -> None:
+async def ws_broadcaster(
+    websocket: WebSocket,
+    stage_id: str,
+    lang: str = "es",
+    mode: str = "local",
+    context: str = "",
+) -> None:
     stage_id = stage_id.strip() or "default"
     speaker_lang = normalize_speaker_lang(lang or websocket.query_params.get("lang"))
+    engine_mode = normalize_mode(mode or websocket.query_params.get("mode"))
+    whisper_context = (context or websocket.query_params.get("context") or "").strip()[:500]
     await websocket.accept()
     stage = await get_or_create_stage(stage_id)
     stage.speaker_lang = speaker_lang
+    stage.engine_mode = engine_mode
+    stage.whisper_context = whisper_context
     stage.broadcasters.add(websocket)
     stage.touch()
     log.info(
-        "Broadcaster conectado a %s (lang=%s, %d emisores)",
+        "Broadcaster conectado a %s (lang=%s, mode=%s, context=%r, %d emisores)",
         stage_id,
         speaker_lang,
+        engine_mode,
+        whisper_context[:80],
         len(stage.broadcasters),
     )
-    await websocket.send_text(
-        json.dumps(
-            {
-                "type": "hello",
-                "role": "broadcaster",
-                "stage_id": stage_id,
-                "speaker_lang": speaker_lang,
-                "rms_threshold": RMS_THRESHOLD,
-                "sample_rate": SAMPLE_RATE,
-            }
-        )
-    )
+    hello = {
+        "type": "hello",
+        "role": "broadcaster",
+        "stage_id": stage_id,
+        "speaker_lang": speaker_lang,
+        "mode": engine_mode,
+        "rms_threshold": RMS_THRESHOLD,
+        "sample_rate": SAMPLE_RATE,
+        "cloud_ready": gemini_client is not None,
+    }
+    if engine_mode == "cloud" and gemini_client is None:
+        hello["type"] = "error"
+        hello["message"] = "Modo nube requiere GEMINI_API_KEY en el servidor"
+    await websocket.send_text(json.dumps(hello))
     try:
         while True:
             message = await websocket.receive()
