@@ -124,6 +124,14 @@ footer a:hover { color: var(--accent-magenta); }
 }
 .mode-label.active { color: var(--accent-cyan); text-shadow: 0 0 10px rgba(0, 242, 254, .7); }
 .mode-label.cloud.active { color: #e879f9; text-shadow: 0 0 10px rgba(232, 121, 249, .8); }
+.beta-tag {
+  display: inline-block; margin-left: .35rem; padding: .08rem .4rem;
+  border-radius: 999px; border: 1px solid rgba(245, 158, 11, .7);
+  font-size: .58rem; letter-spacing: .08em; color: #fbbf24;
+  vertical-align: middle;
+}
+#contextRow { display: none; }
+#contextRow.is-visible { display: flex; }
 .neon-switch {
   position: relative; width: 64px; height: 32px; min-width: 64px; padding: 0;
   border-radius: 999px; border: 1px solid var(--accent-cyan);
@@ -153,11 +161,11 @@ footer a:hover { color: var(--accent-magenta); }
 
     <section class="card">
       <div class="mode-switch" role="group" aria-label="Motor de transcripción">
-        <span class="mode-label active" id="modeLocalLbl">Modo Local</span>
-        <button type="button" id="modeToggle" class="neon-switch" aria-pressed="false" title="Alternar Local / Nube">
+        <span class="mode-label" id="modeLocalLbl">Modo Local <span class="beta-tag">(BETA)</span></span>
+        <button type="button" id="modeToggle" class="neon-switch" aria-pressed="true" title="Alternar Local (BETA) / Nube">
           <span class="neon-knob"></span>
         </button>
-        <span class="mode-label cloud" id="modeCloudLbl">Modo Nube (Gemini)</span>
+        <span class="mode-label cloud active" id="modeCloudLbl">Modo Nube (Gemini)</span>
       </div>
       <div class="row">
         <div class="grow">
@@ -173,10 +181,10 @@ footer a:hover { color: var(--accent-magenta); }
         </div>
         <button id="toggle" type="button">Iniciar micrófono</button>
       </div>
-      <div class="row" style="margin-top:1rem">
+      <div class="row" id="contextRow" style="margin-top:1rem">
         <div class="grow">
           <label for="whisperContext">Palabras clave / Contexto (Opcional)</label>
-          <input id="whisperContext" type="text" placeholder="nombres, tecnicismos, jerga del evento…" autocomplete="off" spellcheck="true"/>
+          <input id="whisperContext" type="text" placeholder="nombres, tecnicismos, jerga del evento…" autocomplete="off" spellcheck="true" disabled/>
         </div>
       </div>
       <div class="meter" id="meter"><span></span></div>
@@ -184,7 +192,7 @@ footer a:hover { color: var(--accent-magenta); }
         <span><i class="dot" id="wsdot"></i><span id="wsstate">WebSocket inactivo</span></span>
         <span id="chunkinfo">chunks: 0</span>
       </div>
-      <p class="hint" id="hint">MediaRecorder envía un fragmento cada 1,5 s. El servidor aplica un noise gate RMS antes de Whisper.</p>
+      <p class="hint" id="hint">Modo Nube (Gemini) por defecto. El noise gate RMS deja pasar voz de auriculares inalámbricos. El contexto de Whisper solo aparece en Modo Local (BETA).</p>
     </section>
 
     <section class="card">
@@ -315,15 +323,21 @@ footer a:hover { color: var(--accent-magenta); }
       modeToggle.setAttribute("aria-pressed", cloud ? "true" : "false");
       $("modeLocalLbl").classList.toggle("active", !cloud);
       $("modeCloudLbl").classList.toggle("active", cloud);
+      const contextRow = $("contextRow");
+      contextRow.classList.toggle("is-visible", !cloud);
+      whisperContext.disabled = cloud || live;
+      if (cloud) whisperContext.value = "";
     }
 
     function connectWs(stageId) {
       return new Promise((resolve, reject) => {
         const lang = speakerLang.value || "es";
         const mode = currentEngineMode();
-        const context = (whisperContext.value || "").trim();
         const qs = new URLSearchParams({ lang, mode });
-        if (context) qs.set("context", context);
+        if (mode === "local") {
+          const context = (whisperContext.value || "").trim();
+          if (context) qs.set("context", context);
+        }
         ws = new WebSocket(
           wsUrl(`/ws/broadcaster/${encodeURIComponent(stageId)}?${qs.toString()}`)
         );
@@ -455,7 +469,7 @@ footer a:hover { color: var(--accent-magenta); }
       toggle.textContent = "Iniciar micrófono";
       stageInput.disabled = false;
       speakerLang.disabled = false;
-      whisperContext.disabled = false;
+      whisperContext.disabled = currentEngineMode() === "cloud";
       modeToggle.disabled = false;
       initSegment = null;
       pcmChunks = [];
@@ -495,6 +509,7 @@ footer a:hover { color: var(--accent-magenta); }
       if (live) stop();
       else start();
     });
+    setEngineMode(true);
   </script>
 </body>
 </html>

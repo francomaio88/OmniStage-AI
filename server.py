@@ -41,7 +41,7 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 
 SAMPLE_RATE = int(os.getenv("OMNI_SAMPLE_RATE", "16000"))
-RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.02"))
+RMS_THRESHOLD = float(os.getenv("OMNI_RMS_THRESHOLD", "0.000005"))
 LOOKBACK_MS = int(os.getenv("OMNI_LOOKBACK_MS", "280"))
 LOOKBACK_SAMPLES = max(1, int(SAMPLE_RATE * LOOKBACK_MS / 1000))
 HANGOVER_CHUNKS = int(os.getenv("OMNI_HANGOVER_CHUNKS", "3"))
@@ -460,7 +460,7 @@ class Stage:
     hangover: int = 0
     speaking: bool = False
     speaker_lang: str = "es"
-    engine_mode: str = "local"
+    engine_mode: str = "cloud"
     whisper_context: str = ""
     last_activity: float = field(default_factory=time.time)
 
