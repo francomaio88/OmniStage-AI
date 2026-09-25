@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
   <style>
 :root {
-  --bg: #0b0f19;
+  --bg: #1d262d;
   --bg-card: rgba(18, 25, 41, 0.7);
   --ink: #f8fafc;
   --muted: #94a3b8;
@@ -20,13 +20,11 @@
   --danger: #ef4444;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; }
+html, body { margin: 0; min-height: 100%; background-color: #1d262d; }
 body {
   font-family: "IBM Plex Sans", system-ui, sans-serif;
-  background: 
-    radial-gradient(circle at 15% 50%, rgba(79, 172, 254, 0.1) 0%, transparent 40%),
-    radial-gradient(circle at 85% 30%, rgba(0, 242, 254, 0.08) 0%, transparent 40%),
-    var(--bg);
+  background-color: #1d262d;
+  background-image: none;
   color: var(--ink);
 }
 .wrap {
@@ -34,13 +32,43 @@ body {
   margin: 0 auto;
   padding: 2.2rem 0 3rem;
 }
-header { margin-bottom: 2rem; display: flex; align-items: center; gap: 1rem; }
-.logo-container { width: 60px; height: 60px; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0, 242, 254, 0.2); border: 1px solid var(--line); }
-.logo-container img { width: 100%; height: 100%; object-fit: cover; }
-.header-text { flex: 1; }
-.kicker { font-family: "IBM Plex Mono", monospace; font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--accent-cyan); margin: 0 0 .35rem; }
-h1 { font-size: 1.8rem; font-weight: 600; margin: 0 0 .4rem; background: -webkit-linear-gradient(45deg, var(--accent-cyan), var(--accent-magenta)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.lede { color: var(--muted); margin: 0; line-height: 1.5; font-size: 0.95rem; }
+header {
+  margin-bottom: 1.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: .65rem;
+}
+.brand {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .75rem;
+  max-width: 100%;
+  line-height: 0;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  text-decoration: none;
+}
+.brand img {
+  height: clamp(40px, 9vw, 56px);
+  width: auto;
+  max-width: min(240px, 72vw);
+  object-fit: contain;
+  object-position: center;
+  display: block;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  mix-blend-mode: normal;
+}
+.lede { color: var(--muted); margin: 0; line-height: 1.5; font-size: 0.95rem; max-width: 36rem; }
 .card {
   background: var(--bg-card);
   backdrop-filter: blur(12px);
@@ -85,28 +113,52 @@ button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(79, 172,
 footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; text-align: center; }
 footer a { color: var(--accent-cyan); text-decoration: none; transition: color 0.2s; }
 footer a:hover { color: var(--accent-magenta); }
+.mode-switch {
+  display: flex; align-items: center; justify-content: center; gap: .85rem;
+  margin: 0 0 1.15rem; padding: .85rem 1rem; border-radius: 12px;
+  border: 1px solid var(--line); background: rgba(0,0,0,.25);
+}
+.mode-label {
+  font-family: "IBM Plex Mono", monospace; font-size: .68rem;
+  letter-spacing: .14em; text-transform: uppercase; color: #64748b;
+}
+.mode-label.active { color: var(--accent-cyan); text-shadow: 0 0 10px rgba(0, 242, 254, .7); }
+.mode-label.cloud.active { color: #e879f9; text-shadow: 0 0 10px rgba(232, 121, 249, .8); }
+.neon-switch {
+  position: relative; width: 64px; height: 32px; min-width: 64px; padding: 0;
+  border-radius: 999px; border: 1px solid var(--accent-cyan);
+  background: #050814; box-shadow: 0 0 14px rgba(0, 242, 254, .45), inset 0 0 10px rgba(0, 242, 254, .12);
+}
+.neon-switch:hover { transform: none; }
+.neon-switch[aria-pressed="true"] {
+  border-color: #e879f9;
+  box-shadow: 0 0 18px rgba(232, 121, 249, .65), inset 0 0 10px rgba(232, 121, 249, .18);
+}
+.neon-knob {
+  position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-cyan); box-shadow: 0 0 12px var(--accent-cyan);
+  transition: transform .2s ease;
+}
+.neon-switch[aria-pressed="true"] .neon-knob {
+  transform: translateX(32px); background: #e879f9; box-shadow: 0 0 12px #e879f9;
+}
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-<div class="logo-container" style="display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; min-width: 150px;">
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e8b86d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
-    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-    <line x1="12" y1="19" x2="12" y2="22"></line>
-    <line x1="8" y1="22" x2="16" y2="22"></line>
-  </svg>
-  <span style="font-weight: bold; color: #f4efe4; font-size: 1.2rem; white-space: nowrap;">OmniStage</span>
-</div>
-      <div class="header-text">
-        <p class="kicker">OmniStage AI · Nerdearla</p>
-        <h1>Emisor del escenario</h1>
-        <p class="lede">Captura el micrófono, recorta el silencio en el edge y publica la transcripción.</p>
-      </div>
+      <a class="brand" href="/"><img src="/logo.png" alt="OmniStage AI"/></a>
+      <p class="lede">Emisor del escenario · transcripción simultánea para Nerdearla</p>
     </header>
 
     <section class="card">
+      <div class="mode-switch" role="group" aria-label="Motor de transcripción">
+        <span class="mode-label active" id="modeLocalLbl">Modo Local</span>
+        <button type="button" id="modeToggle" class="neon-switch" aria-pressed="false" title="Alternar Local / Nube">
+          <span class="neon-knob"></span>
+        </button>
+        <span class="mode-label cloud" id="modeCloudLbl">Modo Nube (Gemini)</span>
+      </div>
       <div class="row">
         <div class="grow">
           <label for="stage">Identificador del escenario</label>
@@ -120,6 +172,12 @@ footer a:hover { color: var(--accent-magenta); }
           </select>
         </div>
         <button id="toggle" type="button">Iniciar micrófono</button>
+      </div>
+      <div class="row" style="margin-top:1rem">
+        <div class="grow">
+          <label for="whisperContext">Palabras clave / Contexto (Opcional)</label>
+          <input id="whisperContext" type="text" placeholder="nombres, tecnicismos, jerga del evento…" autocomplete="off" spellcheck="true"/>
+        </div>
       </div>
       <div class="meter" id="meter"><span></span></div>
       <div class="status">
@@ -149,6 +207,8 @@ footer a:hover { color: var(--accent-magenta); }
     const toggle = $("toggle");
     const stageInput = $("stage");
     const speakerLang = $("speakerLang");
+    const whisperContext = $("whisperContext");
+    const modeToggle = $("modeToggle");
     const logBox = $("log");
     const meterBar = $("meter").firstElementChild;
     const meterEl = $("meter");
@@ -247,11 +307,25 @@ footer a:hover { color: var(--accent-magenta); }
         .replace(/>/g, "&gt;");
     }
 
+    function currentEngineMode() {
+      return modeToggle.getAttribute("aria-pressed") === "true" ? "cloud" : "local";
+    }
+
+    function setEngineMode(cloud) {
+      modeToggle.setAttribute("aria-pressed", cloud ? "true" : "false");
+      $("modeLocalLbl").classList.toggle("active", !cloud);
+      $("modeCloudLbl").classList.toggle("active", cloud);
+    }
+
     function connectWs(stageId) {
       return new Promise((resolve, reject) => {
         const lang = speakerLang.value || "es";
+        const mode = currentEngineMode();
+        const context = (whisperContext.value || "").trim();
+        const qs = new URLSearchParams({ lang, mode });
+        if (context) qs.set("context", context);
         ws = new WebSocket(
-          wsUrl(`/ws/broadcaster/${encodeURIComponent(stageId)}?lang=${encodeURIComponent(lang)}`)
+          wsUrl(`/ws/broadcaster/${encodeURIComponent(stageId)}?${qs.toString()}`)
         );
         ws.binaryType = "arraybuffer";
         ws.onopen = () => {
@@ -363,6 +437,8 @@ footer a:hover { color: var(--accent-magenta); }
 
         stageInput.disabled = true;
         speakerLang.disabled = true;
+        whisperContext.disabled = true;
+        modeToggle.disabled = true;
         toggle.dataset.live = "1";
         toggle.textContent = "Detener emisión";
       } catch (err) {
@@ -379,6 +455,8 @@ footer a:hover { color: var(--accent-magenta); }
       toggle.textContent = "Iniciar micrófono";
       stageInput.disabled = false;
       speakerLang.disabled = false;
+      whisperContext.disabled = false;
+      modeToggle.disabled = false;
       initSegment = null;
       pcmChunks = [];
       if (meterRaf) cancelAnimationFrame(meterRaf);
@@ -410,6 +488,9 @@ footer a:hover { color: var(--accent-magenta); }
       setWsState("WebSocket inactivo", "");
     }
 
+    modeToggle.addEventListener("click", () => {
+      setEngineMode(currentEngineMode() !== "cloud");
+    });
     toggle.addEventListener("click", () => {
       if (live) stop();
       else start();
